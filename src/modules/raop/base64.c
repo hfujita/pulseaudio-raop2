@@ -19,10 +19,10 @@
   USA.
 ***/
 
-/*
+/***
   This file was originally inspired by a file developed by
-    Kungliga Tekniska H�gskolan
-*/
+  Kungliga Tekniska Høgskolan.
+***/
 
 #ifdef HAVE_CONFIG_H
 #include <config.h>
@@ -39,11 +39,17 @@ static const char base64_chars[] =
     "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
 static int pos(char c) {
-    if (c >= 'A' && c <= 'Z') return c - 'A' + 0;
-    if (c >= 'a' && c <= 'z') return c - 'a' + 26;
-    if (c >= '0' && c <= '9') return c - '0' + 52;
-    if (c == '+') return 62;
-    if (c == '/') return 63;
+    if (c >= 'A' && c <= 'Z')
+        return c - 'A' + 0;
+    if (c >= 'a' && c <= 'z')
+        return c - 'a' + 26;
+    if (c >= '0' && c <= '9')
+        return c - '0' + 52;
+    if (c == '+')
+        return 62;
+    if (c == '/')
+        return 63;
+
     return -1;
 }
 
@@ -75,8 +81,10 @@ int pa_base64_encode(const void *data, int size, char **str) {
             p[2] = '=';
         p += 4;
     }
+
     *p = 0;
     *str = s;
+
     return strlen(s);
 }
 
@@ -86,6 +94,7 @@ static unsigned int token_decode(const char *token) {
     int i;
     unsigned int val = 0;
     int marker = 0;
+
     if (strlen(token) < 4)
         return DECODE_ERROR;
     for (i = 0; i < 4; i++) {
@@ -101,8 +110,10 @@ static unsigned int token_decode(const char *token) {
             val += lpos;
         }
     }
+
     if (marker > 2)
         return DECODE_ERROR;
+
     return (marker << 24) | val;
 }
 
@@ -122,5 +133,6 @@ int pa_base64_decode(const char *str, void *data) {
         if (marker < 1)
             *q++ = val & 0xff;
     }
+
     return q - (unsigned char *) data;
 }
