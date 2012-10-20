@@ -23,10 +23,10 @@
   USA.
 ***/
 
-/*
+/***
   This file was originally inspired by a file developed by
-    Kungliga Tekniska Høgskolan
-*/
+  Kungliga Tekniska Høgskolan.
+***/
 
 int pa_base64_encode(const void *data, int size, char **str);
 int pa_base64_decode(const char *str, void *data);
