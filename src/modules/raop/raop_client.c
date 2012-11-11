@@ -286,7 +286,7 @@ static void rtsp_cb(pa_rtsp_client *rtsp, pa_rtsp_state state, pa_headerlist *he
         case STATE_ANNOUNCE:
             pa_log_debug("RAOP: ANNOUNCED");
             pa_rtsp_remove_header(c->rtsp, "Apple-Challenge");
-            pa_rtsp_setup(c->rtsp);
+            pa_rtsp_setup(c->rtsp, NULL);
             break;
 
         case STATE_SETUP: {
