@@ -98,6 +98,7 @@ struct pa_raop_client {
     uint8_t jack_status;
 
     /* Encryption Related bits */
+    int encryption; /* Enable encryption? */
     AES_KEY aes;
     uint8_t aes_iv[AES_CHUNKSIZE]; /* Initialization vector for aes-cbc */
     uint8_t aes_nv[AES_CHUNKSIZE]; /* Next vector for aes-cbc */
@@ -1317,8 +1318,10 @@ int pa_raop_client_encode_sample(pa_raop_client *c, pa_memchunk *raw, pa_memchun
         *(b + 3) = len & 0xff;
     }
 
-    /* Encrypt our data. */
-    aes_encrypt(c, (b + header_size), size);
+    if (c->encryption) {
+        /* Encrypt our data. */
+        aes_encrypt(c, (b + header_size), size);
+    }
 
     /* We're done with the chunk. */
     pa_memblock_release(encoded->memblock);
@@ -1340,6 +1343,9 @@ void pa_raop_client_tcp_set_closed_callback(pa_raop_client *c, pa_raop_client_cl
     c->tcp_closed_userdata = userdata;
 }
 
+void pa_raop_client_set_encryption(pa_raop_client *c, int encryption) {
+    c->encryption = encryption;
+}
 
 void pa_raop_client_udp_set_setup_callback(pa_raop_client *c, pa_raop_client_setup_cb_t callback, void *userdata) {
     pa_assert(c);
