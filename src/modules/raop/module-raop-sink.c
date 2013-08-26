@@ -310,9 +310,10 @@ static int udp_sink_process_msg(pa_msgobject *o, int code, void *data, int64_t o
                     break;
 
                 case PA_SINK_RUNNING:
-                    if (u->sink->thread_info.state == PA_SINK_SUSPENDED)
-                        pa_smoother_resume(u->smoother, pa_rtclock_now(), true);
                     pa_log_debug("RAOP: RUNNING");
+
+                    pa_smoother_resume(u->smoother, pa_rtclock_now(), true);
+
                     if (!pa_raop_client_udp_can_stream(u->raop)) {
                         /* Connecting will trigger a RECORD */
                         pa_raop_client_connect(u->raop);
