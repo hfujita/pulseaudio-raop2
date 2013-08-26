@@ -669,6 +669,11 @@ finish:
 }
 
 static void udp_thread_func(struct userdata *u) {
+    /* Sleep interval per audio packet */
+    pa_usec_t sleep_interval = pa_bytes_to_usec(u->block_size,
+                                              &u->sink->sample_spec);
+    pa_usec_t wakeup_target = 0; /* Next wakeup target clock (in us) */
+
     pa_assert(u);
 
     pa_log_debug("UDP thread starting up");
@@ -753,7 +758,17 @@ static void udp_thread_func(struct userdata *u) {
         pa_assert(u->encoded_memchunk.length > 0);
 
         pa_raop_client_udp_send_audio_packet(u->raop, &u->encoded_memchunk, &written);
-        pa_rtpoll_set_timer_relative(u->rtpoll, pa_bytes_to_usec(u->block_size, &u->sink->sample_spec));
+
+        /* Determine when to wake up next:
+           next_target = prev_target + interval, unless we passed
+           prev_target + interval.
+           In such a case just sleep for one interval */
+        if (wakeup_target + sleep_interval < pa_rtclock_now())
+            wakeup_target = pa_rtclock_now() + sleep_interval;
+        else
+            wakeup_target += sleep_interval;
+        /* Sleep until next packet transmission */
+        pa_rtpoll_set_timer_absolute(u->rtpoll, wakeup_target);
 
         pa_assert(written != 0);
 
