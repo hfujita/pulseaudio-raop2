@@ -34,7 +34,7 @@
         <h1>
 <a name="what-is-this" class="anchor" href="#what-is-this"><span class="octicon octicon-link"></span></a>What is this?</h1>
 
-<p>This is an ongoing effort to make it possible to stream musics from PulseAudio to recent AirPlay-capable devices (e.g. Apple TV, AV receivers).</p>
+<p>This is an ongoing effort to make it possible to stream musics from <a href="http://www.freedesktop.org/wiki/Software/PulseAudio/">PulseAudio</a> to recent AirPlay-capable devices (e.g. Apple TV, AV receivers).</p>
 
 <p>Apparently there are two versions in AirPlay protocol. The older version (version 1) only uses TCP for audio streaming. Version 1 is supported by PulseAudio, in a form of raop module. (RAOP stands for Remote Audio Output Protocol, a protocol underneath AirPlay.) However the newer version 2, which uses UDP as well, is not supported by PulseAudio (as of v4.0). Probably most AirPlay devices today (8/2013) support version 2, which makes it impossible for PulseAudio users to play their music over AirPlay.</p>
 
@@ -42,6 +42,18 @@
 <a name="brief-history" class="anchor" href="#brief-history"><span class="octicon octicon-link"></span></a>Brief history</h2>
 
 <p>There have been a few efforts to address this issue. First Christophe Fergeau started a <a href="https://gitorious.org/%7Eteuf/pulseaudio/pulseaudio-raop2">project</a> to support raop2. Later Martin Blanchard <a href="http://repo.or.cz/w/pulseaudio-raopUDP.git">continued to enhance</a> Fergeau's work. My work is actually based on Blanchard's work, meaning that it is also based on Fergeau's efforts.</p>
+
+<p>Here are the several differences from Blanchard's work.</p>
+
+<ul>
+<li>Fixed several bugs which prevented PulseAudio from playing music on Pioneer VSX-43.
+
+<ul>
+<li>I did not intentionally include any device-specific codes but it is the only AirPlay device I currently have.</li>
+</ul>
+</li>
+<li>Upgraded the codebase to PulseAudio 4.0 (previously around 2.99).</li>
+</ul><p>See the commit history for details.</p>
 
 <h2>
 <a name="warnings" class="anchor" href="#warnings"><span class="octicon octicon-link"></span></a>Warnings</h2>
