@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html>
+
+  <head>
+    <meta charset='utf-8' />
+    <meta http-equiv="X-UA-Compatible" content="chrome=1" />
+    <meta name="description" content="Pulseaudio-raop2 : Experimental RAOP2 (Apple AirPlay2) support for PulseAudio" />
+
+    <link rel="stylesheet" type="text/css" media="screen" href="stylesheets/stylesheet.css">
+
+    <title>Pulseaudio-raop2</title>
+  </head>
+
+  <body>
+
+    <!-- HEADER -->
+    <div id="header_wrap" class="outer">
+        <header class="inner">
+          <a id="forkme_banner" href="https://github.com/hfujita/pulseaudio-raop2">View on GitHub</a>
+
+          <h1 id="project_title">Pulseaudio-raop2</h1>
+          <h2 id="project_tagline">Experimental RAOP2 (Apple AirPlay2) support for PulseAudio</h2>
+
+            <section id="downloads">
+              <a class="zip_download_link" href="https://github.com/hfujita/pulseaudio-raop2/zipball/master">Download this project as a .zip file</a>
+              <a class="tar_download_link" href="https://github.com/hfujita/pulseaudio-raop2/tarball/master">Download this project as a tar.gz file</a>
+            </section>
+        </header>
+    </div>
+
+    <!-- MAIN CONTENT -->
+    <div id="main_content_wrap" class="outer">
+      <section id="main_content" class="inner">
+        <h1>
+<a name="what-is-this" class="anchor" href="#what-is-this"><span class="octicon octicon-link"></span></a>What is this?</h1>
+
+<p>This is an ongoing effort to make it possible to stream musics from PulseAudio to recent AirPlay-capable devices (e.g. Apple TV, AV receivers).</p>
+
+<p>Apparently there are two versions in AirPlay protocol. The older version (version 1) only uses TCP for audio streaming. Version 1 is supported by PulseAudio, in a form of raop module. (RAOP stands for Remote Audio Output Protocol, a protocol underneath AirPlay.) However the newer version 2, which uses UDP as well, is not supported by PulseAudio (as of v4.0). Probably most AirPlay devices today (8/2013) support version 2, which makes it impossible for PulseAudio users to play their music over AirPlay.</p>
+
+<h2>
+<a name="brief-history" class="anchor" href="#brief-history"><span class="octicon octicon-link"></span></a>Brief history</h2>
+
+<p>There have been a few efforts to address this issue. First Christophe Fergeau started a <a href="https://gitorious.org/%7Eteuf/pulseaudio/pulseaudio-raop2">project</a> to support raop2. Later Martin Blanchard <a href="http://repo.or.cz/w/pulseaudio-raopUDP.git">continued to enhance</a> Fergeau's work. My work is actually based on Blanchard's work, meaning that it is also based on Fergeau's efforts.</p>
+
+<h2>
+<a name="warnings" class="anchor" href="#warnings"><span class="octicon octicon-link"></span></a>Warnings</h2>
+
+<ul>
+<li>This is still not more than an experimental branch. It is totally unstable and may not work at all on some devices. <strong>Do not expect too much!</strong>
+</li>
+<li>This is totally my personal hobby. It is not supported by any company or organization. My contribution totally depends on my free time and motivation. Especially, my primary goal is to make it work on my Pioneer VSX-43, so I may not be interested in other devices.</li>
+<li>You don't have to be a C/systems programming expert to try it, but you probably have to be an expert of building software/configuring your system.</li>
+<li>As written in the license, there is <strong>absolutely no warranty</strong>. You should try this at your own risk.</li>
+</ul><h1>
+<a name="how-to-try" class="anchor" href="#how-to-try"><span class="octicon octicon-link"></span></a>How to try</h1>
+
+<p>Since I'm using Ubuntu 13.04, I'll give you an instruction in Ubuntu. Should be similar in Debian or other Debian/Ubuntu-based distros. For other systems, please send me a patch for this page if you figure out how.</p>
+
+<h2>
+<a name="0-prerequisites" class="anchor" href="#0-prerequisites"><span class="octicon octicon-link"></span></a>0. Prerequisites</h2>
+
+<p>Install some packages:</p>
+
+<pre><code>sudo apt-get install build-essential paprefs git
+sudo apt-get build-dep pulseaudio
+</code></pre>
+
+<h2>
+<a name="1-retrieving-the-code" class="anchor" href="#1-retrieving-the-code"><span class="octicon octicon-link"></span></a>1. Retrieving the code</h2>
+
+<pre><code>$ git clone https://github.com/hfujita/pulseaudio-raop2.git
+</code></pre>
+
+<p>or</p>
+
+<pre><code>$ git@github.com:hfujita/pulseaudio-raop2.git # if you have github account and registered your key
+</code></pre>
+
+<p><strong>Note:</strong> tarball or zip <strong>won't work</strong> because PulseAudio build system relies on git revision information.</p>
+
+<h2>
+<a name="2-building-the-software" class="anchor" href="#2-building-the-software"><span class="octicon octicon-link"></span></a>2. Building the software</h2>
+
+<p>As written in pulseaudio-raop2/README</p>
+
+<pre><code>$ cd pulseaudio-raop2
+$ ./autogen.sh
+$ CFLAGS="-ggdb3 -O0" LDFLAGS="-ggdb3" ./configure  # See below
+$ make
+</code></pre>
+
+<p>FYI, here is my command line for <code>configure</code>, taking some parameters from the Ubuntu PulseAudio package.</p>
+
+<pre><code>$ CFLAGS="-ggdb3 -O0" LDFLAGS="-ggdb3" ./configure --prefix=$HOME --enable-x11 --disable-hal-compat
+</code></pre>
+
+<h2>
+<a name="3-before-running-the-new-pulseaudio" class="anchor" href="#3-before-running-the-new-pulseaudio"><span class="octicon octicon-link"></span></a>3. Before running the new PulseAudio</h2>
+
+<h3>
+<a name="paprefs" class="anchor" href="#paprefs"><span class="octicon octicon-link"></span></a>paprefs</h3>
+
+<p>PulseAudio should be configured so that it will discover AirPlay devices on the network.</p>
+
+<pre><code>$ paprefs &amp;  # This is an X application
+</code></pre>
+
+<p>In the <code>Network Access</code> tab, turn on <code>Make discoverable Apple AirTunes sound devices available locally</code>, then close the application.</p>
+
+<h3>
+<a name="firewall" class="anchor" href="#firewall"><span class="octicon octicon-link"></span></a>Firewall</h3>
+
+<p>If you are using personal firewall (e.g. ufw or iptables), it should allow UDP packets to come in and go out between the AirPlay device. I can hardly tell which port should be opened, as ports are dynamically chosen.</p>
+
+<h3>
+<a name="disabling-autospawn" class="anchor" href="#disabling-autospawn"><span class="octicon octicon-link"></span></a>Disabling autospawn</h3>
+
+<p>In your environment, it is likely that PulseAudio is already running. First you need to stop it. However, by default PulseAudio re-spawns automatically even if you stop it manually.</p>
+
+<pre><code>$ echo "autospawn=no" &gt;&gt; ~/.pulse/client.conf
+</code></pre>
+
+<p>This will disable autorespawning (thanks to <a href="http://askubuntu.com/questions/8425/how-to-temporarily-disable-pulseaudio">this page</a>). You may later remove this directive if you lose interest in PulseAudio experiments and want to go back to the original configuration.</p>
+
+<p>Then, finally we are ready to kill the existing PulseAudio daemon.</p>
+
+<pre><code>$ pulseaudio -k
+</code></pre>
+
+<p>Ubuntu desktop users will see that the sound icon on the status bar changes.</p>
+
+<h2>
+<a name="4-launching-the-new-pulseaudio" class="anchor" href="#4-launching-the-new-pulseaudio"><span class="octicon octicon-link"></span></a>4. Launching the new PulseAudio</h2>
+
+<pre><code>$ ./src/pulseaudio -n -F src/default.pa -p $(pwd)/src/ --log-time=1 -vvvv 2&gt;&amp;1 | tee pulse.log
+</code></pre>
+
+<p>Actually, options after <code>-p $(pwd)/src/</code> are optional (logging purpose), but definitely helpful for troubleshooting.</p>
+
+<p>In the sound setting dialog, you'll see your AirPlay device as an output device. Select your device and start your favorite music.</p>
+
+<p>Have fun!</p>
+
+<p>When you are done, press Ctrl+C to kill the program. If the program hangs up and doesn't accept Ctrl+C, do</p>
+
+<pre><code>$ pkill -KILL pulseaudio
+</code></pre>
+
+<h3>
+<a name="5-relaunching-the-original-pulseaudio-deamon" class="anchor" href="#5-relaunching-the-original-pulseaudio-deamon"><span class="octicon octicon-link"></span></a>(5. Relaunching the original PulseAudio deamon)</h3>
+
+<p>After you finish the experiment, you can launch the original PulseAudio deamon by</p>
+
+<pre><code>$ pulseaudio -D
+</code></pre>
+
+<h1>
+<a name="known-issues" class="anchor" href="#known-issues"><span class="octicon octicon-link"></span></a>Known issues</h1>
+
+<ul>
+<li>Sound test (launched from the GNOME sound setting dialog) does not work (no sound heard).</li>
+<li>When stop playing music and then start again, PulseAudio may go into an abnormal state (no sound/hang up/crash).</li>
+<li>Packet retransmission is not supported yet.</li>
+</ul><h1>
+<a name="tested-device" class="anchor" href="#tested-device"><span class="octicon octicon-link"></span></a>Tested device</h1>
+
+<p>Please send me a report if you have any experience with your device. Both positive/negative results are welcome.</p>
+
+<ul>
+<li>Pioneer VSX-43</li>
+</ul><h1>
+<a name="contact-information" class="anchor" href="#contact-information"><span class="octicon octicon-link"></span></a>Contact information</h1>
+
+<p>Please e-mail me at <a href="mailto:crisp.fujita@nifty.com">crisp.fujita@nifty.com</a>.</p>
+
+<h1>
+<a name="related-information" class="anchor" href="#related-information"><span class="octicon octicon-link"></span></a>Related information</h1>
+
+<h2>
+<a name="other-implementations" class="anchor" href="#other-implementations"><span class="octicon octicon-link"></span></a>Other implementations</h2>
+
+<p>Some other raop2 implementations which allegedly work. (I've not actually tested though.)</p>
+
+<ul>
+<li>
+<a href="https://npmjs.org/package/airtunes">node-airtunes</a> node.js implementation of raop2</li>
+<li><a href="https://github.com/jasonmc/forked-daapd">forked-daapd</a></li>
+</ul><h2>
+<a name="protocol-information" class="anchor" href="#protocol-information"><span class="octicon octicon-link"></span></a>Protocol information</h2>
+
+<ul>
+<li><a href="http://git.zx2c4.com/Airtunes2/about/">http://git.zx2c4.com/Airtunes2/about/</a></li>
+<li><a href="http://nto.github.io/AirPlay.html">http://nto.github.io/AirPlay.html</a></li>
+</ul>
+      </section>
+    </div>
+
+    <!-- FOOTER  -->
+    <div id="footer_wrap" class="outer">
+      <footer class="inner">
+        <p class="copyright">Pulseaudio-raop2 maintained by <a href="https://github.com/hfujita">hfujita</a></p>
+        <p>Published with <a href="http://pages.github.com">GitHub Pages</a></p>
+      </footer>
+    </div>
+
+    
+
+  </body>
+</html>
