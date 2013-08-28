@@ -318,6 +318,7 @@ static int udp_sink_process_msg(pa_msgobject *o, int code, void *data, int64_t o
                         /* Connecting will trigger a RECORD */
                         pa_raop_client_connect(u->raop);
                     }
+                    pa_rtpoll_set_timer_relative(u->rtpoll, pa_bytes_to_usec(u->block_size, &u->sink->sample_spec));
 
                     break;
 
@@ -364,6 +365,7 @@ static int udp_sink_process_msg(pa_msgobject *o, int code, void *data, int64_t o
 
             if (u->sink->thread_info.state == PA_SINK_SUSPENDED) {
                 /* Our stream has been suspended so we just flush it... */
+                pa_rtpoll_set_timer_disabled(u->rtpoll);
                 pa_raop_client_flush(u->raop);
             }
 
