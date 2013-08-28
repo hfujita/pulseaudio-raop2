@@ -172,9 +172,17 @@ $ make
 <h1>
 <a name="known-issues" class="anchor" href="#known-issues"><span class="octicon octicon-link"></span></a>Known issues</h1>
 
+<p>As of 8/27/2013</p>
+
 <ul>
 <li>Sound test (launched from the GNOME sound setting dialog) does not work (no sound heard).</li>
-<li>When stop playing music and then start again, PulseAudio may go into an abnormal state (no sound/hang up/crash).</li>
+<li>When stop playing music and then start again, PulseAudio may go into an abnormal state (no sound/hang up/crash).
+
+<ul>
+<li>Mitigated by <a href="https://github.com/hfujita/pulseaudio-raop2/commit/a91f32e70815ed6e9d7f6c5d9a40d92371531ee5">this patch</a> but still hangs occasionally</li>
+</ul>
+</li>
+<li>Works reasonably with VLC but when playing music from Rhythmbox, quite rough sound is heard.</li>
 <li>Packet retransmission is not supported yet.</li>
 </ul><h1>
 <a name="tested-device" class="anchor" href="#tested-device"><span class="octicon octicon-link"></span></a>Tested device</h1>
@@ -186,7 +194,7 @@ $ make
 </ul><h1>
 <a name="contact-information" class="anchor" href="#contact-information"><span class="octicon octicon-link"></span></a>Contact information</h1>
 
-<p>Please e-mail me at <a href="mailto:crisp.fujita@nifty.com">crisp.fujita@nifty.com</a>.</p>
+<p>Please e-mail me at Hajime Fujita <a href="mailto:crisp.fujita@nifty.com">crisp.fujita@nifty.com</a>.</p>
 
 <h1>
 <a name="related-information" class="anchor" href="#related-information"><span class="octicon octicon-link"></span></a>Related information</h1>
