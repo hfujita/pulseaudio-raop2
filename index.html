@@ -162,28 +162,54 @@ $ make
 </code></pre>
 
 <h3>
-<a name="5-relaunching-the-original-pulseaudio-deamon" class="anchor" href="#5-relaunching-the-original-pulseaudio-deamon"><span class="octicon octicon-link"></span></a>(5. Relaunching the original PulseAudio deamon)</h3>
+<a name="5-relaunching-the-original-pulseaudio-daemon" class="anchor" href="#5-relaunching-the-original-pulseaudio-daemon"><span class="octicon octicon-link"></span></a>(5. Relaunching the original PulseAudio daemon)</h3>
 
-<p>After you finish the experiment, you can launch the original PulseAudio deamon by</p>
+<p>After you finish the experiment, you can launch the original PulseAudio daemon by</p>
 
 <pre><code>$ pulseaudio -D
+</code></pre>
+
+<h3>
+<a name="6-updating-the-source-tree" class="anchor" href="#6-updating-the-source-tree"><span class="octicon octicon-link"></span></a>6. Updating the source tree</h3>
+
+<p>To get the latest patches from my repository, run:</p>
+
+<pre><code>$ cd pulseaudio-raop2
+$ git pull
 </code></pre>
 
 <h1>
 <a name="known-issues" class="anchor" href="#known-issues"><span class="octicon octicon-link"></span></a>Known issues</h1>
 
-<p>As of 8/27/2013</p>
+<p>As of 8/29/2013</p>
 
 <ul>
 <li>Sound test (launched from the GNOME sound setting dialog) does not work (no sound heard).</li>
 <li>When stop playing music and then start again, PulseAudio may go into an abnormal state (no sound/hang up/crash).
 
 <ul>
-<li>Mitigated by <a href="https://github.com/hfujita/pulseaudio-raop2/commit/a91f32e70815ed6e9d7f6c5d9a40d92371531ee5">this patch</a> but still hangs occasionally</li>
+<li>Mostly mitigated by <a href="https://github.com/hfujita/pulseaudio-raop2/commit/a91f32e70815ed6e9d7f6c5d9a40d92371531ee5">this patch</a> and <a href="https://github.com/hfujita/pulseaudio-raop2/commit/0d3ad99ffdd16ad9a4325391fa0b48edec5ae179">this patch</a>
+</li>
 </ul>
 </li>
-<li>Works reasonably with VLC but when playing music from Rhythmbox, quite rough sound is heard.</li>
+<li>Works reasonably with VLC/Totem but when playing music from Rhythmbox and Flash player, quite rough sound is heard.</li>
+<li>There's a huge latency. Okay for music player but absolutely terrible for movies/voice chat.</li>
 <li>Packet retransmission is not supported yet.</li>
+</ul><h1>
+<a name="tested-music-players" class="anchor" href="#tested-music-players"><span class="octicon octicon-link"></span></a>Tested music players</h1>
+
+<h2>
+<a name="works-well" class="anchor" href="#works-well"><span class="octicon octicon-link"></span></a>Works well</h2>
+
+<ul>
+<li>VLC</li>
+<li>Totem</li>
+</ul><h2>
+<a name="rough-sound" class="anchor" href="#rough-sound"><span class="octicon octicon-link"></span></a>Rough sound</h2>
+
+<ul>
+<li>Rhythmbox</li>
+<li>Adobe Flash player</li>
 </ul><h1>
 <a name="tested-device" class="anchor" href="#tested-device"><span class="octicon octicon-link"></span></a>Tested device</h1>
 
