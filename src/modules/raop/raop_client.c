@@ -922,6 +922,8 @@ static void udp_rtsp_cb(pa_rtsp_client *rtsp, pa_rtsp_state state, pa_headerlist
 
         case STATE_TEARDOWN: {
             pa_log_debug("RAOP: TEARDOWN");
+            pa_assert(c->udp_disconnected_callback);
+            pa_assert(c->rtsp);
 
             pa_rtsp_disconnect(c->rtsp);
 
@@ -929,26 +931,35 @@ static void udp_rtsp_cb(pa_rtsp_client *rtsp, pa_rtsp_state state, pa_headerlist
                 pa_close(c->udp_stream_fd);
                 c->udp_stream_fd = -1;
             }
-            if (c->udp_control_fd > 0) {
-                pa_close(c->udp_control_fd);
-                c->udp_control_fd = -1;
-            }
-            if (c->udp_timing_fd > 0) {
-                pa_close(c->udp_timing_fd);
-                c->udp_timing_fd = -1;
-            }
 
-            pa_log_debug("RTSP control channel closed");
+            pa_log_debug("RTSP control channel closed (teardown)");
 
             pa_rtsp_client_free(c->rtsp);
             pa_xfree(c->sid);
             c->rtsp = NULL;
             c->sid = NULL;
 
+            /*
+              Callback for cleanup -- e.g. pollfd
+
+              Share the disconnected callback since TEARDOWN event
+              is essentially equivalent to DISCONNECTED.
+              In case some special treatment turns out to be required
+              for TEARDOWN in future, a new callback function may be
+              defined and used.
+            */
+            c->udp_disconnected_callback(c->udp_disconnected_userdata);
+
+            /* Control and timing fds are closed by udp_sink_process_msg,
+               after it disables poll */
+            c->udp_control_fd = -1;
+            c->udp_timing_fd = -1;
+
             break;
         }
 
         case STATE_DISCONNECTED: {
+            pa_log_debug("RAOP: DISCONNECTED");
             pa_assert(c->udp_disconnected_callback);
             pa_assert(c->rtsp);
 
@@ -956,16 +967,8 @@ static void udp_rtsp_cb(pa_rtsp_client *rtsp, pa_rtsp_state state, pa_headerlist
                 pa_close(c->udp_stream_fd);
                 c->udp_stream_fd = -1;
             }
-            if (c->udp_control_fd > 0) {
-                pa_close(c->udp_control_fd);
-                c->udp_control_fd = -1;
-            }
-            if (c->udp_timing_fd > 0) {
-                pa_close(c->udp_timing_fd);
-                c->udp_timing_fd = -1;
-            }
 
-            pa_log_debug("RTSP control channel closed");
+            pa_log_debug("RTSP control channel closed (disconnected)");
 
             pa_rtsp_client_free(c->rtsp);
             pa_xfree(c->sid);
@@ -973,6 +976,10 @@ static void udp_rtsp_cb(pa_rtsp_client *rtsp, pa_rtsp_state state, pa_headerlist
             c->sid = NULL;
 
             c->udp_disconnected_callback(c->udp_disconnected_userdata);
+            /* Control and timing fds are closed by udp_sink_process_msg,
+               after it disables poll */
+            c->udp_control_fd = -1;
+            c->udp_timing_fd = -1;
 
             break;
         }
@@ -1098,8 +1105,6 @@ int pa_raop_client_teardown(pa_raop_client *c) {
 
     pa_assert(c);
 
-    /* This should be followed by a STATE_DISCONNECTED event
-     * which will take care of cleaning up everything */
     if (c->rtsp != NULL)
         rv = pa_rtsp_teardown(c->rtsp);
 
