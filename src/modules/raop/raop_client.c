@@ -76,6 +76,7 @@ struct pa_raop_client {
     uint16_t port;
     char *sid;
     pa_rtsp_client *rtsp;
+    pa_raop_protocol_t protocol;
 
     uint8_t jack_type;
     uint8_t jack_status;
@@ -369,12 +370,14 @@ static void rtsp_cb(pa_rtsp_client *rtsp, pa_rtsp_state state, pa_headerlist *he
     }
 }
 
-pa_raop_client* pa_raop_client_new(pa_core *core, const char *host) {
+pa_raop_client* pa_raop_client_new(pa_core *core, const char *host,
+                                   pa_raop_protocol_t protocol) {
     pa_parsed_address a;
     pa_raop_client* c;
 
     pa_assert(core);
     pa_assert(host);
+    pa_assert(protocol == RAOP_TCP);
 
     if (pa_parse_address(host, &a) < 0)
         return NULL;
@@ -387,6 +390,7 @@ pa_raop_client* pa_raop_client_new(pa_core *core, const char *host) {
     c = pa_xnew0(pa_raop_client, 1);
     c->core = core;
     c->fd = -1;
+    c->protocol = protocol;
 
     c->host = a.path_or_host;
     if (a.port)

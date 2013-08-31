@@ -24,9 +24,14 @@
 
 #include <pulsecore/core.h>
 
+typedef enum pa_raop_protocol {
+    RAOP_TCP,
+    RAOP_UDP,
+} pa_raop_protocol_t;
+
 typedef struct pa_raop_client pa_raop_client;
 
-pa_raop_client* pa_raop_client_new(pa_core *core, const char *host);
+pa_raop_client* pa_raop_client_new(pa_core *core, const char *host, pa_raop_protocol_t protocol);
 void pa_raop_client_free(pa_raop_client *c);
 
 int pa_raop_connect(pa_raop_client *c);
