@@ -68,6 +68,9 @@ PA_MODULE_USAGE(
         "sink_name=<name for the sink> "
         "sink_properties=<properties for the sink> "
         "server=<address>  "
+        "protocol=<transport protocol> "
+        "encryption=<encryption type> "
+        "codec=<audio codec> "
         "format=<sample format> "
         "rate=<sample rate> "
         "channels=<number of channels>");
@@ -83,6 +86,8 @@ struct userdata {
     pa_rtpoll *rtpoll;
     pa_rtpoll_item *rtpoll_item;
     pa_thread *thread;
+
+    pa_raop_protocol_t protocol;
 
     pa_memchunk raw_memchunk;
     pa_memchunk encoded_memchunk;
@@ -115,6 +120,9 @@ static const char* const valid_modargs[] = {
     "sink_name",
     "sink_properties",
     "server",
+    "protocol",
+    "encryption",
+    "codec",
     "format",
     "rate",
     "channels",
@@ -506,7 +514,7 @@ int pa__init(pa_module *m) {
     struct userdata *u = NULL;
     pa_sample_spec ss;
     pa_modargs *ma = NULL;
-    const char *server;
+    const char *server, *protocol;
     pa_sink_new_data data;
 
     pa_assert(m);
@@ -569,6 +577,20 @@ int pa__init(pa_module *m) {
         goto fail;
     }
 
+    protocol = pa_modargs_get_value(ma, "protocol", NULL);
+    if (protocol == NULL || pa_streq(protocol, "TCP")) {
+        /* Assume TCP by default */
+        u->protocol = RAOP_TCP;
+    }
+    else if (pa_streq(protocol, "UDP")) {
+        u->protocol = RAOP_UDP;
+        pa_log("UDP is not supported in this module version.");
+        goto fail;
+    } else {
+        pa_log("Unsupported protocol argument given: %s", protocol);
+        goto fail;
+    }
+
     pa_sink_new_data_init(&data);
     data.driver = __FILE__;
     data.module = m;
@@ -601,7 +623,7 @@ int pa__init(pa_module *m) {
     pa_sink_set_asyncmsgq(u->sink, u->thread_mq.inq);
     pa_sink_set_rtpoll(u->sink, u->rtpoll);
 
-    if (!(u->raop = pa_raop_client_new(u->core, server))) {
+    if (!(u->raop = pa_raop_client_new(u->core, server, u->protocol))) {
         pa_log("Failed to connect to server.");
         goto fail;
     }
