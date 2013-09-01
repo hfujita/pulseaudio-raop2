@@ -388,7 +388,7 @@ pa_raop_client* pa_raop_client_new(pa_core *core, const char *host,
     else
         c->port = RAOP_PORT;
 
-    if (pa_raop_connect(c)) {
+    if (pa_raop_client_connect(c)) {
         pa_raop_client_free(c);
         return NULL;
     }
@@ -407,7 +407,7 @@ void pa_raop_client_free(pa_raop_client *c) {
     pa_xfree(c);
 }
 
-int pa_raop_connect(pa_raop_client *c) {
+int pa_raop_client_connect(pa_raop_client *c) {
     char *sci;
     struct {
         uint32_t a;
@@ -441,7 +441,7 @@ int pa_raop_connect(pa_raop_client *c) {
     return pa_rtsp_connect(c->rtsp);
 }
 
-int pa_raop_flush(pa_raop_client *c) {
+int pa_raop_client_flush(pa_raop_client *c) {
     pa_assert(c);
 
     pa_rtsp_flush(c->rtsp, c->seq, c->rtptime);

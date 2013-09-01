@@ -34,8 +34,8 @@ typedef struct pa_raop_client pa_raop_client;
 pa_raop_client* pa_raop_client_new(pa_core *core, const char *host, pa_raop_protocol_t protocol);
 void pa_raop_client_free(pa_raop_client *c);
 
-int pa_raop_connect(pa_raop_client *c);
-int pa_raop_flush(pa_raop_client *c);
+int pa_raop_client_connect(pa_raop_client *c);
+int pa_raop_client_flush(pa_raop_client *c);
 
 int pa_raop_client_set_volume(pa_raop_client *c, pa_volume_t volume);
 int pa_raop_client_encode_sample(pa_raop_client *c, pa_memchunk *raw, pa_memchunk *encoded);
