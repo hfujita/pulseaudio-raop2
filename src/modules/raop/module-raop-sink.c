@@ -170,6 +170,15 @@ static void on_close(void*userdata) {
     pa_asyncmsgq_post(u->thread_mq.inq, PA_MSGOBJECT(u->sink), SINK_MESSAGE_RIP_SOCKET, NULL, 0, NULL, NULL);
 }
 
+static pa_usec_t sink_get_latency(const struct userdata *u) {
+    pa_usec_t w, r;
+
+    r = pa_smoother_get(u->smoother, pa_rtclock_now());
+    w = pa_bytes_to_usec((u->offset - u->encoding_overhead + (u->encoded_memchunk.length / u->encoding_ratio)), &u->sink->sample_spec);
+
+    return w > r ? w - r : 0;
+}
+
 static int sink_process_msg(pa_msgobject *o, int code, void *data, int64_t offset, pa_memchunk *chunk) {
     struct userdata *u = PA_SINK(o)->userdata;
 
@@ -215,12 +224,7 @@ static int sink_process_msg(pa_msgobject *o, int code, void *data, int64_t offse
             break;
 
         case PA_SINK_MESSAGE_GET_LATENCY: {
-            pa_usec_t w, r;
-
-            r = pa_smoother_get(u->smoother, pa_rtclock_now());
-            w = pa_bytes_to_usec((u->offset - u->encoding_overhead + (u->encoded_memchunk.length / u->encoding_ratio)), &u->sink->sample_spec);
-
-            *((pa_usec_t*) data) = w > r ? w - r : 0;
+            *((pa_usec_t*) data) = sink_get_latency(u);
             return 0;
         }
 
