@@ -231,6 +231,55 @@ static void on_connection(pa_socket_client *sc, pa_iochannel *io, void *userdata
     c->callback(c->fd, c->userdata);
 }
 
+static void do_rtsp_announce(pa_raop_client *c) {
+    int i;
+    uint8_t rsakey[512];
+    char *key, *iv, *sac = NULL, *sdp;
+    uint16_t rand_data;
+    const char *ip;
+    char *url;
+
+    ip = pa_rtsp_localip(c->rtsp);
+    /* First of all set the url properly. */
+    url = pa_sprintf_malloc("rtsp://%s/%s", ip, c->sid);
+    pa_rtsp_set_url(c->rtsp, url);
+    pa_xfree(url);
+
+    /* Now encrypt our aes_public key to send to the device. */
+    i = rsa_encrypt(c->aes_key, AES_CHUNKSIZE, rsakey);
+    pa_base64_encode(rsakey, i, &key);
+    rtrimchar(key, '=');
+    pa_base64_encode(c->aes_iv, AES_CHUNKSIZE, &iv);
+    rtrimchar(iv, '=');
+
+    /* UDP protocol does not need "Apple-Challenge" at announce. */
+    if (c->protocol == RAOP_TCP) {
+        pa_random(&rand_data, sizeof(rand_data));
+        pa_base64_encode(&rand_data, AES_CHUNKSIZE, &sac);
+        rtrimchar(sac, '=');
+        pa_rtsp_add_header(c->rtsp, "Apple-Challenge", sac);
+    }
+    sdp = pa_sprintf_malloc(
+        "v=0\r\n"
+        "o=iTunes %s 0 IN IP4 %s\r\n"
+        "s=iTunes\r\n"
+        "c=IN IP4 %s\r\n"
+        "t=0 0\r\n"
+        "m=audio 0 RTP/AVP 96\r\n"
+        "a=rtpmap:96 AppleLossless\r\n"
+        "a=fmtp:96 %d 0 16 40 10 14 2 255 0 0 44100\r\n"
+        "a=rsaaeskey:%s\r\n"
+        "a=aesiv:%s\r\n",
+        c->sid, ip, c->host,
+        4096,
+        key, iv);
+    pa_rtsp_announce(c->rtsp, sdp);
+    pa_xfree(key);
+    pa_xfree(iv);
+    pa_xfree(sac);
+    pa_xfree(sdp);
+}
+
 static void rtsp_cb(pa_rtsp_client *rtsp, pa_rtsp_state state, pa_headerlist *headers, void *userdata) {
     pa_raop_client *c = userdata;
     pa_assert(c);
@@ -239,48 +288,8 @@ static void rtsp_cb(pa_rtsp_client *rtsp, pa_rtsp_state state, pa_headerlist *he
 
     switch (state) {
         case STATE_CONNECT: {
-            int i;
-            uint8_t rsakey[512];
-            char *key, *iv, *sac, *sdp;
-            uint16_t rand_data;
-            const char *ip;
-            char *url;
-
             pa_log_debug("RAOP: CONNECTED");
-            ip = pa_rtsp_localip(c->rtsp);
-            /* First of all set the url properly. */
-            url = pa_sprintf_malloc("rtsp://%s/%s", ip, c->sid);
-            pa_rtsp_set_url(c->rtsp, url);
-            pa_xfree(url);
-
-            /* Now encrypt our aes_public key to send to the device. */
-            i = rsa_encrypt(c->aes_key, AES_CHUNKSIZE, rsakey);
-            pa_base64_encode(rsakey, i, &key);
-            rtrimchar(key, '=');
-            pa_base64_encode(c->aes_iv, AES_CHUNKSIZE, &iv);
-            rtrimchar(iv, '=');
-
-            pa_random(&rand_data, sizeof(rand_data));
-            pa_base64_encode(&rand_data, AES_CHUNKSIZE, &sac);
-            rtrimchar(sac, '=');
-            pa_rtsp_add_header(c->rtsp, "Apple-Challenge", sac);
-            sdp = pa_sprintf_malloc(
-                "v=0\r\n"
-                "o=iTunes %s 0 IN IP4 %s\r\n"
-                "s=iTunes\r\n"
-                "c=IN IP4 %s\r\n"
-                "t=0 0\r\n"
-                "m=audio 0 RTP/AVP 96\r\n"
-                "a=rtpmap:96 AppleLossless\r\n"
-                "a=fmtp:96 4096 0 16 40 10 14 2 255 0 0 44100\r\n"
-                "a=rsaaeskey:%s\r\n"
-                "a=aesiv:%s\r\n",
-                c->sid, ip, c->host, key, iv);
-            pa_rtsp_announce(c->rtsp, sdp);
-            pa_xfree(key);
-            pa_xfree(iv);
-            pa_xfree(sac);
-            pa_xfree(sdp);
+            do_rtsp_announce(c);
             break;
         }
 
