@@ -186,7 +186,7 @@ static int sink_process_msg(pa_msgobject *o, int code, void *data, int64_t offse
 
                     /* Issue a FLUSH if we are connected. */
                     if (u->fd >= 0) {
-                        pa_raop_flush(u->raop);
+                        pa_raop_client_flush(u->raop);
                     }
                     break;
 
@@ -199,9 +199,9 @@ static int sink_process_msg(pa_msgobject *o, int code, void *data, int64_t offse
                         /* The connection can be closed when idle, so check to
                          * see if we need to reestablish it. */
                         if (u->fd < 0)
-                            pa_raop_connect(u->raop);
+                            pa_raop_client_connect(u->raop);
                         else
-                            pa_raop_flush(u->raop);
+                            pa_raop_client_flush(u->raop);
                     }
 
                     break;
@@ -237,7 +237,7 @@ static int sink_process_msg(pa_msgobject *o, int code, void *data, int64_t offse
 
             if (u->sink->thread_info.state == PA_SINK_SUSPENDED) {
                 /* Our stream has been suspended so we just flush it... */
-                pa_raop_flush(u->raop);
+                pa_raop_client_flush(u->raop);
             }
             return 0;
         }
