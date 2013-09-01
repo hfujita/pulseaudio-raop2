@@ -21,8 +21,11 @@
   Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA 02111-1307
   USA.
 ***/
+#include <pulse/sample.h>
+#include <pulse/volume.h>
 
 #include <pulsecore/core.h>
+#include <pulsecore/memchunk.h>
 
 typedef enum pa_raop_protocol {
     RAOP_TCP,
@@ -31,19 +34,37 @@ typedef enum pa_raop_protocol {
 
 typedef struct pa_raop_client pa_raop_client;
 
-pa_raop_client* pa_raop_client_new(pa_core *core, const char *host, pa_raop_protocol_t protocol);
+pa_raop_client* pa_raop_client_new(pa_core *core, const char *host, pa_raop_protocol_t protocol, pa_sample_spec spec);
 void pa_raop_client_free(pa_raop_client *c);
 
 int pa_raop_client_connect(pa_raop_client *c);
 int pa_raop_client_flush(pa_raop_client *c);
+int pa_raop_client_teardown(pa_raop_client *c);
 
+int pa_raop_client_can_stream(pa_raop_client *c);
 int pa_raop_client_set_volume(pa_raop_client *c, pa_volume_t volume);
 int pa_raop_client_encode_sample(pa_raop_client *c, pa_memchunk *raw, pa_memchunk *encoded);
+
+int pa_raop_client_handle_timing_packet(pa_raop_client *c, const uint8_t packet
+[], ssize_t size);
+int pa_raop_client_handle_control_packet(pa_raop_client *c, const uint8_t packet[], ssize_t size);
+int pa_raop_client_get_blocks_size(pa_raop_client *c, size_t *size);
+int pa_raop_client_send_audio_packet(pa_raop_client *c, pa_memchunk *block, ssize_t *written);
 
 typedef void (*pa_raop_client_cb_t)(int fd, void *userdata);
 void pa_raop_client_set_callback(pa_raop_client *c, pa_raop_client_cb_t callback, void *userdata);
 
 typedef void (*pa_raop_client_closed_cb_t)(void *userdata);
 void pa_raop_client_set_closed_callback(pa_raop_client *c, pa_raop_client_closed_cb_t callback, void *userdata);
+
+
+typedef void (*pa_raop_client_setup_cb_t)(int control_fd, int timing_fd, void *userdata);
+void pa_raop_client_set_setup_callback(pa_raop_client *c, pa_raop_client_setup_cb_t callback, void *userdata);
+
+typedef void (*pa_raop_client_record_cb_t)(void *userdata);
+void pa_raop_client_set_record_callback(pa_raop_client *c, pa_raop_client_record_cb_t callback, void *userdata);
+
+typedef void (*pa_raop_client_disconnected_cb_t)(void *userdata);
+void pa_raop_client_set_disconnected_callback(pa_raop_client *c, pa_raop_client_disconnected_cb_t callback, void *userdata);
 
 #endif
