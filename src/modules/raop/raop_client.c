@@ -116,8 +116,10 @@ struct pa_raop_client {
     void *tcp_closed_userdata;
 
     /* Members only for the UDP protocol */
-    uint16_t udp_control_port;
-    uint16_t udp_timing_port;
+    uint16_t udp_my_control_port;
+    uint16_t udp_my_timing_port;
+    uint16_t udp_server_control_port;
+    uint16_t udp_server_timing_port;
 
     int udp_stream_fd;
     int udp_control_fd;
@@ -321,65 +323,7 @@ static inline uint64_t timeval_to_ntp(struct timeval *tv) {
     return ntp;
 }
 
-static int bind_socket(pa_raop_client *c, int fd, uint16_t port) {
-    struct sockaddr_in sa4;
-#ifdef HAVE_IPV6
-    struct sockaddr_in6 sa6;
-#endif
-    struct sockaddr *sa;
-    socklen_t salen;
-    int one = 1;
-
-    pa_zero(sa4);
-#ifdef HAVE_IPV6
-    pa_zero(sa6);
-#endif
-    if (inet_pton(AF_INET, pa_rtsp_localip(c->rtsp), &sa4.sin_addr) > 0) {
-        sa4.sin_family = AF_INET;
-        sa4.sin_port = htons(port);
-        sa = (struct sockaddr *) &sa4;
-        salen = sizeof(sa4);
-#ifdef HAVE_IPV6
-    } else if (inet_pton(AF_INET6, pa_rtsp_localip(c->rtsp), &sa6.sin6_addr) > 0) {
-        sa6.sin6_family = AF_INET6;
-        sa6.sin6_port = htons(port);
-        sa = (struct sockaddr*) &sa6;
-        salen = sizeof(sa6);
-#endif
-    } else {
-        pa_log("Invalid destination '%s'", c->host);
-        goto fail;
-    }
-
-    one = 1;
-#ifdef SO_TIMESTAMP
-    if (setsockopt(fd, SOL_SOCKET, SO_TIMESTAMP, &one, sizeof(one)) < 0) {
-        pa_log("setsockopt(SO_TIMESTAMP) failed: %s", pa_cstrerror(errno));
-        goto fail;
-    }
-#else
-    pa_log("SO_TIMESTAMP unsupported on this platform");
-    goto fail;
-#endif
-
-    one = 1;
-    if (setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &one, sizeof(one)) < 0) {
-        pa_log("setsockopt(SO_REUSEADDR) failed: %s", pa_cstrerror(errno));
-        goto fail;
-    }
-
-    if (bind(fd, sa, salen) < 0) {
-        pa_log("bind() failed: %s", pa_cstrerror(errno));
-        goto fail;
-    }
-
-    return fd;
-
-fail:
-    return -1;
-}
-
-static int open_udp_socket(pa_raop_client *c, uint16_t port, uint16_t should_bind) {
+static int connect_udp_socket(pa_raop_client *c, int fd, uint16_t port) {
     struct sockaddr_in sa4;
 #ifdef HAVE_IPV6
     struct sockaddr_in6 sa6;
@@ -387,7 +331,6 @@ static int open_udp_socket(pa_raop_client *c, uint16_t port, uint16_t should_bin
     struct sockaddr *sa;
     socklen_t salen;
     sa_family_t af;
-    int fd = -1;
 
     pa_zero(sa4);
 #ifdef HAVE_IPV6
@@ -410,7 +353,7 @@ static int open_udp_socket(pa_raop_client *c, uint16_t port, uint16_t should_bin
         goto fail;
     }
 
-    if ((fd = pa_socket_cloexec(af, SOCK_DGRAM, 0)) < 0) {
+    if (fd < 0 && (fd = pa_socket_cloexec(af, SOCK_DGRAM, 0)) < 0) {
         pa_log("socket() failed: %s", pa_cstrerror(errno));
         goto fail;
     }
@@ -419,19 +362,100 @@ static int open_udp_socket(pa_raop_client *c, uint16_t port, uint16_t should_bin
     pa_make_udp_socket_low_delay(fd);
     pa_make_fd_nonblock(fd);
 
-    if (should_bind) {
-        if (bind_socket(c, fd, port) < 0) {
-            pa_log("bind_socket() failed: %s", pa_cstrerror(errno));
-            goto fail;
-        }
-    }
-
     if (connect(fd, sa, salen) < 0) {
         pa_log("connect() failed: %s", pa_cstrerror(errno));
         goto fail;
     }
 
     pa_log_debug("Connected to %s on port %d (SOCK_DGRAM)", c->host, port);
+    return fd;
+
+fail:
+    if (fd >= 0)
+        pa_close(fd);
+
+    return -1;
+}
+
+static int open_bind_udp_socket(pa_raop_client *c, uint16_t *actual_port) {
+    int fd = -1;
+    uint16_t port;
+    struct sockaddr_in sa4;
+#ifdef HAVE_IPV6
+    struct sockaddr_in6 sa6;
+#endif
+    struct sockaddr *sa;
+    uint16_t *sa_port;
+    socklen_t salen;
+    sa_family_t af;
+    int one = 1;
+
+    pa_assert(actual_port);
+
+    port = *actual_port;
+
+    pa_zero(sa4);
+#ifdef HAVE_IPV6
+    pa_zero(sa6);
+#endif
+    if (inet_pton(AF_INET, pa_rtsp_localip(c->rtsp), &sa4.sin_addr) > 0) {
+        sa4.sin_family = af = AF_INET;
+        sa4.sin_port = htons(port);
+        sa = (struct sockaddr *) &sa4;
+        salen = sizeof(sa4);
+        sa_port = &sa4.sin_port;
+#ifdef HAVE_IPV6
+    } else if (inet_pton(AF_INET6, pa_rtsp_localip(c->rtsp), &sa6.sin6_addr) > 0) {
+        sa6.sin6_family = af = AF_INET6;
+        sa6.sin6_port = htons(port);
+        sa = (struct sockaddr *) &sa6;
+        salen = sizeof(sa6);
+        sa_port = &sa6.sin6_port;
+#endif
+    } else {
+        pa_log("Could not determine which address family to use");
+        goto fail;
+    }
+
+    pa_zero(sa4);
+#ifdef HAVE_IPV6
+    pa_zero(sa6);
+#endif
+
+    if ((fd = pa_socket_cloexec(af, SOCK_DGRAM, 0)) < 0) {
+        pa_log("socket() failed: %s", pa_cstrerror(errno));
+        goto fail;
+    }
+
+#ifdef SO_TIMESTAMP
+    if (setsockopt(fd, SOL_SOCKET, SO_TIMESTAMP, &one, sizeof(one)) < 0) {
+        pa_log("setsockopt(SO_TIMESTAMP) failed: %s", pa_cstrerror(errno));
+        goto fail;
+    }
+#else
+    pa_log("SO_TIMESTAMP unsupported on this platform");
+    goto fail;
+#endif
+
+    one = 1;
+    if (setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &one, sizeof(one)) < 0) {
+        pa_log("setsockopt(SO_REUSEADDR) failed: %s", pa_cstrerror(errno));
+        goto fail;
+    }
+
+    do {
+        *sa_port = htons(port);
+
+        if (bind(fd, sa, salen) < 0 && errno != EADDRINUSE) {
+            pa_log("bind_socket() failed: %s", pa_cstrerror(errno));
+            goto fail;
+        }
+        break;
+    } while (++port > 0);
+
+    pa_log_debug("Socket bound to port %d (SOCK_DGRAM)", port);
+    *actual_port = port;
+
     return fd;
 
 fail:
@@ -699,14 +723,44 @@ static void udp_rtsp_cb(pa_rtsp_client *rtsp, pa_rtsp_state state, pa_headerlist
         case STATE_ANNOUNCE: {
             char *trs;
 
+            pa_assert(c->udp_control_fd < 0);
+            pa_assert(c->udp_timing_fd < 0);
+
+            c->udp_control_fd = open_bind_udp_socket(c, &c->udp_my_control_port);
+            if (c->udp_control_fd < 0)
+                goto error_announce;
+            c->udp_timing_fd  = open_bind_udp_socket(c, &c->udp_my_timing_port);
+            if (c->udp_timing_fd < 0)
+                goto error_announce;
+
             trs = pa_sprintf_malloc("RTP/AVP/UDP;unicast;interleaved=0-1;mode=record;control_port=%d;timing_port=%d",
-                c->udp_control_port,
-                c->udp_timing_port);
+                c->udp_my_control_port,
+                c->udp_my_timing_port);
 
             pa_rtsp_setup(c->rtsp, trs);
 
             pa_xfree(trs);
             break;
+
+        error_announce:
+            if (c->udp_control_fd > 0) {
+                pa_close(c->udp_control_fd);
+                c->udp_control_fd = -1;
+            }
+            if (c->udp_timing_fd > 0) {
+                pa_close(c->udp_timing_fd);
+                c->udp_timing_fd = -1;
+            }
+
+            pa_rtsp_client_free(c->rtsp);
+            c->rtsp = NULL;
+
+            c->udp_my_control_port     = UDP_DEFAULT_CONTROL_PORT;
+            c->udp_server_control_port = UDP_DEFAULT_CONTROL_PORT;
+            c->udp_my_timing_port      = UDP_DEFAULT_TIMING_PORT;
+            c->udp_server_timing_port  = UDP_DEFAULT_TIMING_PORT;
+
+            pa_log_error("aborting RTSP announce, failed creating required sockets");
         }
 
         case STATE_SETUP: {
@@ -715,6 +769,7 @@ static void udp_rtsp_cb(pa_rtsp_client *rtsp, pa_rtsp_state state, pa_headerlist
             char delimiters[] = ";";
             const char *token_state = NULL;
             uint32_t port = 0;
+            int ret;
 
             pa_log_debug("RAOP: SETUP");
 
@@ -751,12 +806,12 @@ static void udp_rtsp_cb(pa_rtsp_client *rtsp, pa_rtsp_state state, pa_headerlist
                         if (pa_streq(token, "control_port")) {
                             port = 0;
                             pa_atou(pc + 1, &port);
-                            c->udp_control_port = port;
+                            c->udp_server_control_port = port;
                         }
                         if (pa_streq(token, "timing_port")) {
                             port = 0;
                             pa_atou(pc + 1, &port);
-                            c->udp_timing_port = port;
+                            c->udp_server_timing_port = port;
                         }
                         *pc = '=';
                     }
@@ -772,21 +827,28 @@ static void udp_rtsp_cb(pa_rtsp_client *rtsp, pa_rtsp_state state, pa_headerlist
             stream_port = pa_rtsp_serverport(c->rtsp);
             if (stream_port == 0)
                 goto error;
-            if (c->udp_control_port == 0 || c->udp_timing_port == 0)
+            if (c->udp_server_control_port == 0 || c->udp_server_timing_port == 0)
                 goto error;
 
             pa_log_debug("Using server_port=%d, control_port=%d & timing_port=%d",
                 stream_port,
-                c->udp_control_port,
-                c->udp_timing_port);
+                c->udp_server_control_port,
+                c->udp_server_timing_port);
 
-            c->udp_stream_fd = open_udp_socket(c, stream_port, 0);
-            c->udp_control_fd = open_udp_socket(c, c->udp_control_port, 1);
-            c->udp_timing_fd = open_udp_socket(c, c->udp_timing_port, 1);
+            pa_assert(c->udp_stream_fd < 0);
+            pa_assert(c->udp_control_fd >= 0);
+            pa_assert(c->udp_timing_fd >= 0);
 
+            c->udp_stream_fd = connect_udp_socket(c, -1, stream_port);
             if (c->udp_stream_fd <= 0)
                 goto error;
-            if (c->udp_control_fd <= 0 || c->udp_timing_fd <= 0)
+            ret = connect_udp_socket(c, c->udp_control_fd,
+                                     c->udp_server_control_port);
+            if (ret < 0)
+                goto error;
+            ret = connect_udp_socket(c, c->udp_timing_fd,
+                                     c->udp_server_timing_port);
+            if (ret < 0)
                 goto error;
 
             c->udp_setup_callback(c->udp_control_fd, c->udp_timing_fd, c->udp_setup_userdata);
@@ -811,8 +873,10 @@ static void udp_rtsp_cb(pa_rtsp_client *rtsp, pa_rtsp_state state, pa_headerlist
             pa_rtsp_client_free(c->rtsp);
             c->rtsp = NULL;
 
-            c->udp_control_port = UDP_DEFAULT_CONTROL_PORT;
-            c->udp_timing_port = UDP_DEFAULT_TIMING_PORT;
+            c->udp_my_control_port     = UDP_DEFAULT_CONTROL_PORT;
+            c->udp_server_control_port = UDP_DEFAULT_CONTROL_PORT;
+            c->udp_my_timing_port      = UDP_DEFAULT_TIMING_PORT;
+            c->udp_server_timing_port  = UDP_DEFAULT_TIMING_PORT;
 
             pa_log_error("aborting RTSP setup, failed creating required sockets");
 
@@ -933,8 +997,10 @@ pa_raop_client* pa_raop_client_new(pa_core *core, const char *host,
     c->udp_control_fd = -1;
     c->udp_timing_fd = -1;
 
-    c->udp_control_port = UDP_DEFAULT_CONTROL_PORT;
-    c->udp_timing_port = UDP_DEFAULT_TIMING_PORT;
+    c->udp_my_control_port     = UDP_DEFAULT_CONTROL_PORT;
+    c->udp_server_control_port = UDP_DEFAULT_CONTROL_PORT;
+    c->udp_my_timing_port      = UDP_DEFAULT_TIMING_PORT;
+    c->udp_server_timing_port  = UDP_DEFAULT_TIMING_PORT;
 
     c->host = pa_xstrdup(a.path_or_host);
     if (a.port)
