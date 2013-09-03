@@ -59,7 +59,7 @@
 #include "rtsp_client.h"
 #include "base64.h"
 
-#define FRAMES_PER_PACKET 352
+#define UDP_FRAMES_PER_PACKET 352
 #define AES_CHUNKSIZE 16
 
 #define JACK_STATUS_DISCONNECTED 0
@@ -72,20 +72,19 @@
 #define VOLUME_MIN -144
 #define VOLUME_MAX 0
 
-#define RAOP_PORT 5000
 #define DEFAULT_RAOP_PORT 5000
-#define DEFAULT_AUDIO_PORT 6000
-#define DEFAULT_CONTROL_PORT 6001
-#define DEFAULT_TIMING_PORT 6002
+#define UDP_DEFAULT_AUDIO_PORT 6000
+#define UDP_DEFAULT_CONTROL_PORT 6001
+#define UDP_DEFAULT_TIMING_PORT 6002
 
 typedef enum {
-    PAYLOAD_TIMING_REQUEST = 0x52,
-    PAYLOAD_TIMING_RESPONSE = 0x53,
-    PAYLOAD_SYNCHRONIZATION = 0x54,
-    PAYLOAD_RETRANSMIT_REQUEST = 0x55,
-    PAYLOAD_RETRANSMIT_REPLY = 0x56,
-    PAYLOAD_AUDIO_DATA = 0x60
-} pa_raop_payload_type;
+    UDP_PAYLOAD_TIMING_REQUEST = 0x52,
+    UDP_PAYLOAD_TIMING_RESPONSE = 0x53,
+    UDP_PAYLOAD_SYNCHRONIZATION = 0x54,
+    UDP_PAYLOAD_RETRANSMIT_REQUEST = 0x55,
+    UDP_PAYLOAD_RETRANSMIT_REPLY = 0x56,
+    UDP_PAYLOAD_AUDIO_DATA = 0x60
+} pa_raop_udp_payload_type;
 
 struct pa_raop_client {
     pa_core *core;
@@ -108,36 +107,36 @@ struct pa_raop_client {
     uint32_t rtptime;
 
     /* Members only for the TCP protocol */
-    pa_socket_client *sc;
-    int fd;
+    pa_socket_client *tcp_sc;
+    int tcp_fd;
 
-    pa_raop_client_cb_t callback;
-    void *userdata;
-    pa_raop_client_closed_cb_t closed_callback;
-    void *closed_userdata;
+    pa_raop_client_cb_t tcp_callback;
+    void *tcp_userdata;
+    pa_raop_client_closed_cb_t tcp_closed_callback;
+    void *tcp_closed_userdata;
 
     /* Members only for the UDP protocol */
-    uint16_t control_port;
-    uint16_t timing_port;
+    uint16_t udp_control_port;
+    uint16_t udp_timing_port;
 
-    int stream_fd;
-    int control_fd;
-    int timing_fd;
+    int udp_stream_fd;
+    int udp_control_fd;
+    int udp_timing_fd;
 
-    uint32_t ssrc;
+    uint32_t udp_ssrc;
 
-    bool first_packet;
-    uint32_t sync_interval;
-    uint32_t sync_count;
+    bool udp_first_packet;
+    uint32_t udp_sync_interval;
+    uint32_t udp_sync_count;
 
-    pa_raop_client_setup_cb_t setup_callback;
-    void *setup_userdata;
+    pa_raop_client_setup_cb_t udp_setup_callback;
+    void *udp_setup_userdata;
 
-    pa_raop_client_record_cb_t record_callback;
-    void *record_userdata;
+    pa_raop_client_record_cb_t udp_record_callback;
+    void *udp_record_userdata;
 
-    pa_raop_client_disconnected_cb_t disconnected_callback;
-    void *disconnected_userdata;
+    pa_raop_client_disconnected_cb_t udp_disconnected_callback;
+    void *udp_disconnected_userdata;
 };
 
 /* Timming packet header (8x8):
@@ -145,7 +144,7 @@ struct pa_raop_client {
  *  [1]   Payload type: 0x53 | marker bit: 0x80,
  *  [2,3] Sequence number: 0x0007,
  *  [4,7] Timestamp: 0x00000000 (unused). */
-static const uint8_t timming_header[8] = {
+static const uint8_t udp_timming_header[8] = {
     0x80, 0xd3, 0x00, 0x07,
     0x00, 0x00, 0x00, 0x00
 };
@@ -155,7 +154,7 @@ static const uint8_t timming_header[8] = {
  *  [1]   Payload type: 0x54 | marker bit: 0x80,
  *  [2,3] Sequence number: 0x0007,
  *  [4,7] Timestamp: 0x00000000 (to be set). */
-static const uint8_t sync_header[8] = {
+static const uint8_t udp_sync_header[8] = {
     0x80, 0xd4, 0x00, 0x07,
     0x00, 0x00, 0x00, 0x00
 };
@@ -283,32 +282,32 @@ static inline void rtrimchar(char *str, char rc) {
     }
 }
 
-static void on_connection(pa_socket_client *sc, pa_iochannel *io, void *userdata) {
+static void tcp_on_connection(pa_socket_client *sc, pa_iochannel *io, void *userdata) {
     pa_raop_client *c = userdata;
 
     pa_assert(sc);
     pa_assert(c);
-    pa_assert(c->sc == sc);
-    pa_assert(c->fd < 0);
-    pa_assert(c->callback);
+    pa_assert(c->tcp_sc == sc);
+    pa_assert(c->tcp_fd < 0);
+    pa_assert(c->tcp_callback);
 
-    pa_socket_client_unref(c->sc);
-    c->sc = NULL;
+    pa_socket_client_unref(c->tcp_sc);
+    c->tcp_sc = NULL;
 
     if (!io) {
         pa_log("Connection failed: %s", pa_cstrerror(errno));
         return;
     }
 
-    c->fd = pa_iochannel_get_send_fd(io);
+    c->tcp_fd = pa_iochannel_get_send_fd(io);
 
     pa_iochannel_set_noclose(io, true);
     pa_iochannel_free(io);
 
-    pa_make_tcp_socket_low_delay(c->fd);
+    pa_make_tcp_socket_low_delay(c->tcp_fd);
 
     pa_log_debug("Connection established");
-    c->callback(c->fd, c->userdata);
+    c->tcp_callback(c->tcp_fd, c->tcp_userdata);
 }
 
 static inline uint64_t timeval_to_ntp(struct timeval *tv) {
@@ -442,14 +441,14 @@ fail:
     return -1;
 }
 
-static int send_timing_packet(pa_raop_client *c, const uint32_t data[6], uint64_t received) {
+static int udp_send_timing_packet(pa_raop_client *c, const uint32_t data[6], uint64_t received) {
     uint32_t packet[8];
     struct timeval tv;
     ssize_t written = 0;
     uint64_t trs = 0;
     int rv = 1;
 
-    memcpy(packet, timming_header, sizeof(timming_header));
+    memcpy(packet, udp_timming_header, sizeof(udp_timming_header));
     /* Copying originate timestamp from the incoming request packet. */
     packet[2] = data[4];
     packet[3] = data[5];
@@ -461,14 +460,14 @@ static int send_timing_packet(pa_raop_client *c, const uint32_t data[6], uint64_
     packet[6] = htonl(trs >> 32);
     packet[7] = htonl(trs & 0xffffffff);
 
-    written = pa_loop_write(c->timing_fd, packet, sizeof(packet), NULL);
+    written = pa_loop_write(c->udp_timing_fd, packet, sizeof(packet), NULL);
     if (written == sizeof(packet))
         rv = 0;
 
     return rv;
 }
 
-static int send_sync_packet(pa_raop_client *c, uint32_t stamp) {
+static int udp_send_sync_packet(pa_raop_client *c, uint32_t stamp) {
     const uint32_t delay = 88200;
     uint32_t packet[5];
     struct timeval tv;
@@ -476,8 +475,8 @@ static int send_sync_packet(pa_raop_client *c, uint32_t stamp) {
     uint64_t trs = 0;
     int rv = 1;
 
-    memcpy(packet, sync_header, sizeof(sync_header));
-    if (c->first_packet)
+    memcpy(packet, udp_sync_header, sizeof(udp_sync_header));
+    if (c->udp_first_packet)
         packet[0] |= 0x10;
     stamp -= delay;
     packet[1] = htonl(stamp);
@@ -488,25 +487,25 @@ static int send_sync_packet(pa_raop_client *c, uint32_t stamp) {
     stamp += delay;
     packet[4] = htonl(stamp);
 
-    written = pa_loop_write(c->control_fd, packet, sizeof(packet), NULL);
+    written = pa_loop_write(c->udp_control_fd, packet, sizeof(packet), NULL);
     if (written == sizeof(packet))
         rv = 0;
 
     return rv;
 }
 
-static int send_audio_packet(pa_raop_client *c, uint32_t *buffer, size_t size, ssize_t *written) {
+static int udp_send_audio_packet(pa_raop_client *c, uint32_t *buffer, size_t size, ssize_t *written) {
     ssize_t length = 0;
     int rv = 1;
 
     memcpy(buffer, udp_audio_header, sizeof(udp_audio_header));
-    if (c->first_packet)
+    if (c->udp_first_packet)
         buffer[0] |= ((uint32_t) 0x80) << 8;
     buffer[0] |= htonl((uint32_t) c->seq);
     buffer[1] = htonl(c->rtptime);
-    buffer[2] = htonl(c->ssrc);
+    buffer[2] = htonl(c->udp_ssrc);
 
-    length = pa_loop_write(c->stream_fd, buffer, size, NULL);
+    length = pa_loop_write(c->udp_stream_fd, buffer, size, NULL);
     if (length == ((ssize_t) size))
         rv = 0;
 
@@ -557,7 +556,7 @@ static void do_rtsp_announce(pa_raop_client *c) {
         "a=rsaaeskey:%s\r\n"
         "a=aesiv:%s\r\n",
         c->sid, ip, c->host,
-        c->protocol == RAOP_TCP ? 4096 : FRAMES_PER_PACKET,
+        c->protocol == RAOP_TCP ? 4096 : UDP_FRAMES_PER_PACKET,
         key, iv);
     pa_rtsp_announce(c->rtsp, sdp);
     pa_xfree(key);
@@ -623,11 +622,11 @@ static void tcp_rtsp_cb(pa_rtsp_client *rtsp, pa_rtsp_state state, pa_headerlist
             uint32_t port = pa_rtsp_serverport(c->rtsp);
             pa_log_debug("RAOP: RECORDED");
 
-            if (!(c->sc = pa_socket_client_new_string(c->core->mainloop, true, c->host, port))) {
+            if (!(c->tcp_sc = pa_socket_client_new_string(c->core->mainloop, true, c->host, port))) {
                 pa_log("failed to connect to server '%s:%d'", c->host, port);
                 return;
             }
-            pa_socket_client_set_callback(c->sc, on_connection, c);
+            pa_socket_client_set_callback(c->tcp_sc, tcp_on_connection, c);
             break;
         }
 
@@ -644,23 +643,23 @@ static void tcp_rtsp_cb(pa_rtsp_client *rtsp, pa_rtsp_state state, pa_headerlist
             break;
 
         case STATE_DISCONNECTED:
-            pa_assert(c->closed_callback);
+            pa_assert(c->tcp_closed_callback);
             pa_assert(c->rtsp);
 
             pa_log_debug("RTSP control channel closed");
             pa_rtsp_client_free(c->rtsp);
             c->rtsp = NULL;
-            if (c->fd > 0) {
+            if (c->tcp_fd > 0) {
                 /* We do not close the fd, we leave it to the closed callback to do that */
-                c->fd = -1;
+                c->tcp_fd = -1;
             }
-            if (c->sc) {
-                pa_socket_client_unref(c->sc);
-                c->sc = NULL;
+            if (c->tcp_sc) {
+                pa_socket_client_unref(c->tcp_sc);
+                c->tcp_sc = NULL;
             }
             pa_xfree(c->sid);
             c->sid = NULL;
-            c->closed_callback(c->closed_userdata);
+            c->tcp_closed_callback(c->tcp_closed_userdata);
             break;
     }
 }
@@ -701,8 +700,8 @@ static void udp_rtsp_cb(pa_rtsp_client *rtsp, pa_rtsp_state state, pa_headerlist
             char *trs;
 
             trs = pa_sprintf_malloc("RTP/AVP/UDP;unicast;interleaved=0-1;mode=record;control_port=%d;timing_port=%d",
-                c->control_port,
-                c->timing_port);
+                c->udp_control_port,
+                c->udp_timing_port);
 
             pa_rtsp_setup(c->rtsp, trs);
 
@@ -711,7 +710,7 @@ static void udp_rtsp_cb(pa_rtsp_client *rtsp, pa_rtsp_state state, pa_headerlist
         }
 
         case STATE_SETUP: {
-            uint32_t stream_port = DEFAULT_AUDIO_PORT;
+            uint32_t stream_port = UDP_DEFAULT_AUDIO_PORT;
             char *ajs, *trs, *token, *pc;
             char delimiters[] = ";";
             const char *token_state = NULL;
@@ -752,12 +751,12 @@ static void udp_rtsp_cb(pa_rtsp_client *rtsp, pa_rtsp_state state, pa_headerlist
                         if (pa_streq(token, "control_port")) {
                             port = 0;
                             pa_atou(pc + 1, &port);
-                            c->control_port = port;
+                            c->udp_control_port = port;
                         }
                         if (pa_streq(token, "timing_port")) {
                             port = 0;
                             pa_atou(pc + 1, &port);
-                            c->timing_port = port;
+                            c->udp_timing_port = port;
                         }
                         *pc = '=';
                     }
@@ -773,47 +772,47 @@ static void udp_rtsp_cb(pa_rtsp_client *rtsp, pa_rtsp_state state, pa_headerlist
             stream_port = pa_rtsp_serverport(c->rtsp);
             if (stream_port == 0)
                 goto error;
-            if (c->control_port == 0 || c->timing_port == 0)
+            if (c->udp_control_port == 0 || c->udp_timing_port == 0)
                 goto error;
 
             pa_log_debug("Using server_port=%d, control_port=%d & timing_port=%d",
                 stream_port,
-                c->control_port,
-                c->timing_port);
+                c->udp_control_port,
+                c->udp_timing_port);
 
-            c->stream_fd = open_udp_socket(c, stream_port, 0);
-            c->control_fd = open_udp_socket(c, c->control_port, 1);
-            c->timing_fd = open_udp_socket(c, c->timing_port, 1);
+            c->udp_stream_fd = open_udp_socket(c, stream_port, 0);
+            c->udp_control_fd = open_udp_socket(c, c->udp_control_port, 1);
+            c->udp_timing_fd = open_udp_socket(c, c->udp_timing_port, 1);
 
-            if (c->stream_fd <= 0)
+            if (c->udp_stream_fd <= 0)
                 goto error;
-            if (c->control_fd <= 0 || c->timing_fd <= 0)
+            if (c->udp_control_fd <= 0 || c->udp_timing_fd <= 0)
                 goto error;
 
-            c->setup_callback(c->control_fd, c->timing_fd, c->setup_userdata);
+            c->udp_setup_callback(c->udp_control_fd, c->udp_timing_fd, c->udp_setup_userdata);
             pa_rtsp_record(c->rtsp, &c->seq, &c->rtptime);
 
             break;
 
         error:
-            if (c->stream_fd > 0) {
-                pa_close(c->stream_fd);
-                c->stream_fd = -1;
+            if (c->udp_stream_fd > 0) {
+                pa_close(c->udp_stream_fd);
+                c->udp_stream_fd = -1;
             }
-            if (c->control_fd > 0) {
-                pa_close(c->control_fd);
-                c->control_fd = -1;
+            if (c->udp_control_fd > 0) {
+                pa_close(c->udp_control_fd);
+                c->udp_control_fd = -1;
             }
-            if (c->timing_fd > 0) {
-                pa_close(c->timing_fd);
-                c->timing_fd = -1;
+            if (c->udp_timing_fd > 0) {
+                pa_close(c->udp_timing_fd);
+                c->udp_timing_fd = -1;
             }
 
             pa_rtsp_client_free(c->rtsp);
             c->rtsp = NULL;
 
-            c->control_port = DEFAULT_CONTROL_PORT;
-            c->timing_port = DEFAULT_TIMING_PORT;
+            c->udp_control_port = UDP_DEFAULT_CONTROL_PORT;
+            c->udp_timing_port = UDP_DEFAULT_TIMING_PORT;
 
             pa_log_error("aborting RTSP setup, failed creating required sockets");
 
@@ -830,15 +829,15 @@ static void udp_rtsp_cb(pa_rtsp_client *rtsp, pa_rtsp_state state, pa_headerlist
             alt = pa_xstrdup(pa_headerlist_gets(headers, "Audio-Latency"));
             /* Generate a random synchronization source identifier from this session. */
             pa_random(&rand, sizeof(rand));
-            c->ssrc = rand;
+            c->udp_ssrc = rand;
 
             if (alt)
                 pa_atoi(alt, &latency);
 
-            c->first_packet = true;
-            c->sync_count = 0;
+            c->udp_first_packet = true;
+            c->udp_sync_count = 0;
 
-            c->record_callback(c->setup_userdata);
+            c->udp_record_callback(c->udp_setup_userdata);
 
             pa_xfree(alt);
             break;
@@ -861,17 +860,17 @@ static void udp_rtsp_cb(pa_rtsp_client *rtsp, pa_rtsp_state state, pa_headerlist
 
             pa_rtsp_disconnect(c->rtsp);
 
-            if (c->stream_fd > 0) {
-                pa_close(c->stream_fd);
-                c->stream_fd = -1;
+            if (c->udp_stream_fd > 0) {
+                pa_close(c->udp_stream_fd);
+                c->udp_stream_fd = -1;
             }
-            if (c->control_fd > 0) {
-                pa_close(c->control_fd);
-                c->control_fd = -1;
+            if (c->udp_control_fd > 0) {
+                pa_close(c->udp_control_fd);
+                c->udp_control_fd = -1;
             }
-            if (c->timing_fd > 0) {
-                pa_close(c->timing_fd);
-                c->timing_fd = -1;
+            if (c->udp_timing_fd > 0) {
+                pa_close(c->udp_timing_fd);
+                c->udp_timing_fd = -1;
             }
 
             pa_log_debug("RTSP control channel closed");
@@ -885,20 +884,20 @@ static void udp_rtsp_cb(pa_rtsp_client *rtsp, pa_rtsp_state state, pa_headerlist
         }
 
         case STATE_DISCONNECTED: {
-            pa_assert(c->disconnected_callback);
+            pa_assert(c->udp_disconnected_callback);
             pa_assert(c->rtsp);
 
-            if (c->stream_fd > 0) {
-                pa_close(c->stream_fd);
-                c->stream_fd = -1;
+            if (c->udp_stream_fd > 0) {
+                pa_close(c->udp_stream_fd);
+                c->udp_stream_fd = -1;
             }
-            if (c->control_fd > 0) {
-                pa_close(c->control_fd);
-                c->control_fd = -1;
+            if (c->udp_control_fd > 0) {
+                pa_close(c->udp_control_fd);
+                c->udp_control_fd = -1;
             }
-            if (c->timing_fd > 0) {
-                pa_close(c->timing_fd);
-                c->timing_fd = -1;
+            if (c->udp_timing_fd > 0) {
+                pa_close(c->udp_timing_fd);
+                c->udp_timing_fd = -1;
             }
 
             pa_log_debug("RTSP control channel closed");
@@ -908,7 +907,7 @@ static void udp_rtsp_cb(pa_rtsp_client *rtsp, pa_rtsp_state state, pa_headerlist
             c->rtsp = NULL;
             c->sid = NULL;
 
-            c->disconnected_callback(c->disconnected_userdata);
+            c->udp_disconnected_callback(c->udp_disconnected_userdata);
 
             break;
         }
@@ -934,14 +933,14 @@ pa_raop_client* pa_raop_client_new(pa_core *core, const char *host,
 
     c = pa_xnew0(pa_raop_client, 1);
     c->core = core;
-    c->fd = -1;
+    c->tcp_fd = -1;
     c->protocol = protocol;
-    c->stream_fd = -1;
-    c->control_fd = -1;
-    c->timing_fd = -1;
+    c->udp_stream_fd = -1;
+    c->udp_control_fd = -1;
+    c->udp_timing_fd = -1;
 
-    c->control_port = DEFAULT_CONTROL_PORT;
-    c->timing_port = DEFAULT_TIMING_PORT;
+    c->udp_control_port = UDP_DEFAULT_CONTROL_PORT;
+    c->udp_timing_port = UDP_DEFAULT_TIMING_PORT;
 
     c->host = a.path_or_host;
     if (a.port)
@@ -949,10 +948,10 @@ pa_raop_client* pa_raop_client_new(pa_core *core, const char *host,
     else
         c->port = DEFAULT_RAOP_PORT;
 
-    c->first_packet = true;
+    c->udp_first_packet = true;
     /* Packet sync interval should be around 1s. */
-    c->sync_interval = spec.rate / FRAMES_PER_PACKET;
-    c->sync_count = 0;
+    c->udp_sync_interval = spec.rate / UDP_FRAMES_PER_PACKET;
+    c->udp_sync_count = 0;
 
     if (c->protocol == RAOP_TCP) {
         if (pa_raop_client_connect(c)) {
@@ -1021,7 +1020,7 @@ int pa_raop_client_flush(pa_raop_client *c) {
 
     if (c->rtsp != NULL) {
         rv = pa_rtsp_flush(c->rtsp, c->seq, c->rtptime);
-        c->sync_count = -1;
+        c->udp_sync_count = -1;
     }
 
     return rv;
@@ -1040,18 +1039,18 @@ int pa_raop_client_teardown(pa_raop_client *c) {
     return rv;
 }
 
-int pa_raop_client_can_stream(pa_raop_client *c) {
+int pa_raop_client_udp_can_stream(pa_raop_client *c) {
     int rv = 0;
 
     pa_assert(c);
 
-    if (c->stream_fd > 0)
+    if (c->udp_stream_fd > 0)
         rv = 1;
 
     return rv;
 }
 
-int pa_raop_client_handle_timing_packet(pa_raop_client *c, const uint8_t packet[], ssize_t size) {
+int pa_raop_client_udp_handle_timing_packet(pa_raop_client *c, const uint8_t packet[], ssize_t size) {
     const uint32_t * data = NULL;
     uint8_t payload = 0;
     struct timeval tv;
@@ -1068,15 +1067,15 @@ int pa_raop_client_handle_timing_packet(pa_raop_client *c, const uint8_t packet[
         return 1;
     }
 
-    data = (uint32_t *) (packet + sizeof(timming_header));
+    data = (uint32_t *) (packet + sizeof(udp_timming_header));
     rci = timeval_to_ntp(pa_rtclock_get(&tv));
     /* The market bit is always set (see rfc3550 for packet structure) ! */
     payload = packet[1] ^ 0x80;
     switch (payload) {
-        case PAYLOAD_TIMING_REQUEST:
-            rv = send_timing_packet(c, data, rci);
+        case UDP_PAYLOAD_TIMING_REQUEST:
+            rv = udp_send_timing_packet(c, data, rci);
             break;
-        case PAYLOAD_TIMING_RESPONSE:
+        case UDP_PAYLOAD_TIMING_RESPONSE:
         default:
             pa_log_debug("Got an unexpected payload type on timing channel !");
             return 1;
@@ -1085,7 +1084,7 @@ int pa_raop_client_handle_timing_packet(pa_raop_client *c, const uint8_t packet[
     return rv;
 }
 
-int pa_raop_client_handle_control_packet(pa_raop_client *c, const uint8_t packet[], ssize_t size) {
+int pa_raop_client_udp_handle_control_packet(pa_raop_client *c, const uint8_t packet[], ssize_t size) {
     uint8_t payload = 0;
     int rv = 0;
 
@@ -1099,13 +1098,14 @@ int pa_raop_client_handle_control_packet(pa_raop_client *c, const uint8_t packet
     }
 
     /* The market bit is always set (see rfc3550 for packet structure) ! */
+
     payload = packet[1] ^ 0x80;
     switch (payload) {
-        case PAYLOAD_RETRANSMIT_REQUEST:
+        case UDP_PAYLOAD_RETRANSMIT_REQUEST:
             /* Packet retransmission not implemented yet... */
             /* rv = ... */
             break;
-        case PAYLOAD_RETRANSMIT_REPLY:
+        case UDP_PAYLOAD_RETRANSMIT_REPLY:
         default:
             pa_log_debug("Got an unexpected payload type on control channel !");
             return 1;
@@ -1114,18 +1114,18 @@ int pa_raop_client_handle_control_packet(pa_raop_client *c, const uint8_t packet
     return rv;
 }
 
-int pa_raop_client_get_blocks_size(pa_raop_client *c, size_t *size) {
+int pa_raop_client_udp_get_blocks_size(pa_raop_client *c, size_t *size) {
     int rv = 0;
 
     pa_assert(c);
     pa_assert(size);
 
-    *size = FRAMES_PER_PACKET;
+    *size = UDP_FRAMES_PER_PACKET;
 
     return rv;
 }
 
-int pa_raop_client_send_audio_packet(pa_raop_client *c, pa_memchunk *block, ssize_t *written) {
+int pa_raop_client_udp_send_audio_packet(pa_raop_client *c, pa_memchunk *block, ssize_t *written) {
     uint32_t *buf = NULL;
     ssize_t length = 0;
     int rv = 0;
@@ -1134,24 +1134,24 @@ int pa_raop_client_send_audio_packet(pa_raop_client *c, pa_memchunk *block, ssiz
     pa_assert(block);
 
     /* Sync RTP & NTP timestamp if required. */
-    if (c->first_packet || c->sync_count >= c->sync_interval) {
-        send_sync_packet(c, c->rtptime);
-        c->sync_count = 0;
+    if (c->udp_first_packet || c->udp_sync_count >= c->udp_sync_interval) {
+        udp_send_sync_packet(c, c->rtptime);
+        c->udp_sync_count = 0;
     } else {
-        c->sync_count++;
+        c->udp_sync_count++;
     }
 
     buf = (uint32_t *) pa_memblock_acquire(block->memblock);
     if (buf != NULL && block->length > 0)
-        rv = send_audio_packet(c, buf + block->index, block->length, &length);
+        rv = udp_send_audio_packet(c, buf + block->index, block->length, &length);
     pa_memblock_release(block->memblock);
     block->index += length;
     block->length -= length;
     if (written != NULL)
         *written = length;
 
-    if (c->first_packet)
-        c->first_packet = false;
+    if (c->udp_first_packet)
+        c->udp_first_packet = false;
 
     return rv;
 }
@@ -1266,38 +1266,38 @@ int pa_raop_client_encode_sample(pa_raop_client *c, pa_memchunk *raw, pa_memchun
     return 0;
 }
 
-void pa_raop_client_set_callback(pa_raop_client *c, pa_raop_client_cb_t callback, void *userdata) {
+void pa_raop_client_tcp_set_callback(pa_raop_client *c, pa_raop_client_cb_t callback, void *userdata) {
     pa_assert(c);
 
-    c->callback = callback;
-    c->userdata = userdata;
+    c->tcp_callback = callback;
+    c->tcp_userdata = userdata;
 }
 
-void pa_raop_client_set_closed_callback(pa_raop_client *c, pa_raop_client_closed_cb_t callback, void *userdata) {
+void pa_raop_client_tcp_set_closed_callback(pa_raop_client *c, pa_raop_client_closed_cb_t callback, void *userdata) {
     pa_assert(c);
 
-    c->closed_callback = callback;
-    c->closed_userdata = userdata;
+    c->tcp_closed_callback = callback;
+    c->tcp_closed_userdata = userdata;
 }
 
 
-void pa_raop_client_set_setup_callback(pa_raop_client *c, pa_raop_client_setup_cb_t callback, void *userdata) {
+void pa_raop_client_udp_set_setup_callback(pa_raop_client *c, pa_raop_client_setup_cb_t callback, void *userdata) {
     pa_assert(c);
 
-    c->setup_callback = callback;
-    c->setup_userdata = userdata;
+    c->udp_setup_callback = callback;
+    c->udp_setup_userdata = userdata;
 }
 
-void pa_raop_client_set_record_callback(pa_raop_client *c, pa_raop_client_record_cb_t callback, void *userdata) {
+void pa_raop_client_udp_set_record_callback(pa_raop_client *c, pa_raop_client_record_cb_t callback, void *userdata) {
     pa_assert(c);
 
-    c->record_callback = callback;
-    c->record_userdata = userdata;
+    c->udp_record_callback = callback;
+    c->udp_record_userdata = userdata;
 }
 
-void pa_raop_client_set_disconnected_callback(pa_raop_client *c, pa_raop_client_disconnected_cb_t callback, void *userdata) {
+void pa_raop_client_udp_set_disconnected_callback(pa_raop_client *c, pa_raop_client_disconnected_cb_t callback, void *userdata) {
     pa_assert(c);
 
-    c->disconnected_callback = callback;
-    c->disconnected_userdata = userdata;
+    c->udp_disconnected_callback = callback;
+    c->udp_disconnected_userdata = userdata;
 }

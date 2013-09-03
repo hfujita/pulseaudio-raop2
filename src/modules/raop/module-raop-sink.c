@@ -113,11 +113,11 @@ struct userdata {
     size_t block_size;
 
     /* Members only for the TCP protocol */
-    int fd;
+    int tcp_fd;
 
     /* Members only for the UDP protocol */
-    int control_fd;
-    int timing_fd;
+    int udp_control_fd;
+    int udp_timing_fd;
 };
 
 static const char* const valid_modargs[] = {
@@ -134,26 +134,26 @@ static const char* const valid_modargs[] = {
 };
 
 enum {
-    SINK_MESSAGE_PASS_SOCKET = PA_SINK_MESSAGE_MAX,
-    SINK_MESSAGE_RIP_SOCKET,
-    SINK_MESSAGE_SETUP,
-    SINK_MESSAGE_RECORD,
-    SINK_MESSAGE_DISCONNECTED,
+    SINK_MESSAGE_TCP_PASS_SOCKET = PA_SINK_MESSAGE_MAX,
+    SINK_MESSAGE_TCP_RIP_SOCKET,
+    SINK_MESSAGE_UDP_SETUP,
+    SINK_MESSAGE_UDP_RECORD,
+    SINK_MESSAGE_UDP_DISCONNECTED,
 };
 
 /* Forward declarations: */
 static void sink_set_volume_cb(pa_sink *);
 
-static void on_connection(int fd, void *userdata) {
+static void tcp_on_connection(int fd, void *userdata) {
     int so_sndbuf = 0;
     socklen_t sl = sizeof(int);
     struct userdata *u = userdata;
     pa_assert(u);
 
-    pa_assert(u->fd < 0);
-    u->fd = fd;
+    pa_assert(u->tcp_fd < 0);
+    u->tcp_fd = fd;
 
-    if (getsockopt(u->fd, SOL_SOCKET, SO_SNDBUF, &so_sndbuf, &sl) < 0)
+    if (getsockopt(u->tcp_fd, SOL_SOCKET, SO_SNDBUF, &so_sndbuf, &sl) < 0)
         pa_log_warn("getsockopt(SO_SNDBUF) failed: %s", pa_cstrerror(errno));
     else {
         pa_log_debug("SO_SNDBUF is %zu.", (size_t) so_sndbuf);
@@ -165,16 +165,16 @@ static void on_connection(int fd, void *userdata) {
 
     pa_log_debug("Connection authenticated, handing fd to IO thread...");
 
-    pa_asyncmsgq_post(u->thread_mq.inq, PA_MSGOBJECT(u->sink), SINK_MESSAGE_PASS_SOCKET, NULL, 0, NULL, NULL);
+    pa_asyncmsgq_post(u->thread_mq.inq, PA_MSGOBJECT(u->sink), SINK_MESSAGE_TCP_PASS_SOCKET, NULL, 0, NULL, NULL);
 }
 
-static void on_close(void*userdata) {
+static void tcp_on_close(void*userdata) {
     struct userdata *u = userdata;
     pa_assert(u);
 
     pa_log_debug("Connection closed, informing IO thread...");
 
-    pa_asyncmsgq_post(u->thread_mq.inq, PA_MSGOBJECT(u->sink), SINK_MESSAGE_RIP_SOCKET, NULL, 0, NULL, NULL);
+    pa_asyncmsgq_post(u->thread_mq.inq, PA_MSGOBJECT(u->sink), SINK_MESSAGE_TCP_RIP_SOCKET, NULL, 0, NULL, NULL);
 }
 
 static pa_usec_t sink_get_latency(const struct userdata *u) {
@@ -201,7 +201,7 @@ static int tcp_sink_process_msg(pa_msgobject *o, int code, void *data, int64_t o
                     pa_smoother_pause(u->smoother, pa_rtclock_now());
 
                     /* Issue a FLUSH if we are connected. */
-                    if (u->fd >= 0) {
+                    if (u->tcp_fd >= 0) {
                         pa_raop_client_flush(u->raop);
                     }
                     break;
@@ -214,7 +214,7 @@ static int tcp_sink_process_msg(pa_msgobject *o, int code, void *data, int64_t o
 
                         /* The connection can be closed when idle, so check to
                          * see if we need to reestablish it. */
-                        if (u->fd < 0)
+                        if (u->tcp_fd < 0)
                             pa_raop_client_connect(u->raop);
                         else
                             pa_raop_client_flush(u->raop);
@@ -235,14 +235,14 @@ static int tcp_sink_process_msg(pa_msgobject *o, int code, void *data, int64_t o
             return 0;
         }
 
-        case SINK_MESSAGE_PASS_SOCKET: {
+        case SINK_MESSAGE_TCP_PASS_SOCKET: {
             struct pollfd *pollfd;
 
             pa_assert(!u->rtpoll_item);
 
             u->rtpoll_item = pa_rtpoll_item_new(u->rtpoll, PA_RTPOLL_NEVER, 1);
             pollfd = pa_rtpoll_item_get_pollfd(u->rtpoll_item, NULL);
-            pollfd->fd = u->fd;
+            pollfd->fd = u->tcp_fd;
             pollfd->events = POLLOUT;
             /*pollfd->events = */pollfd->revents = 0;
 
@@ -253,10 +253,10 @@ static int tcp_sink_process_msg(pa_msgobject *o, int code, void *data, int64_t o
             return 0;
         }
 
-        case SINK_MESSAGE_RIP_SOCKET: {
-            if (u->fd >= 0) {
-                pa_close(u->fd);
-                u->fd = -1;
+        case SINK_MESSAGE_TCP_RIP_SOCKET: {
+            if (u->tcp_fd >= 0) {
+                pa_close(u->tcp_fd);
+                u->tcp_fd = -1;
             } else
                 /* FIXME */
                 pa_log("We should not get to this state. Cannot rip socket if not connected.");
@@ -292,7 +292,7 @@ static int udp_sink_process_msg(pa_msgobject *o, int code, void *data, int64_t o
                     pa_log_debug("RAOP: SUSPENDED");
                     pa_smoother_pause(u->smoother, pa_rtclock_now());
 
-                    if (pa_raop_client_can_stream(u->raop)) {
+                    if (pa_raop_client_udp_can_stream(u->raop)) {
                         /* Issue a TEARDOWN if we are still connected. */
                         pa_raop_client_teardown(u->raop);
                     }
@@ -313,7 +313,7 @@ static int udp_sink_process_msg(pa_msgobject *o, int code, void *data, int64_t o
                     if (u->sink->thread_info.state == PA_SINK_SUSPENDED)
                         pa_smoother_resume(u->smoother, pa_rtclock_now(), true);
                     pa_log_debug("RAOP: RUNNING");
-                    if (!pa_raop_client_can_stream(u->raop)) {
+                    if (!pa_raop_client_udp_can_stream(u->raop)) {
                         /* Connecting will trigger a RECORD */
                         pa_raop_client_connect(u->raop);
                     }
@@ -331,7 +331,7 @@ static int udp_sink_process_msg(pa_msgobject *o, int code, void *data, int64_t o
         case PA_SINK_MESSAGE_GET_LATENCY: {
             pa_usec_t r = 0;
 
-            if (pa_raop_client_can_stream(u->raop))
+            if (pa_raop_client_udp_can_stream(u->raop))
                 r = sink_get_latency(u);
 
             *((pa_usec_t*) data) = r;
@@ -339,26 +339,26 @@ static int udp_sink_process_msg(pa_msgobject *o, int code, void *data, int64_t o
             return 0;
         }
 
-        case SINK_MESSAGE_SETUP: {
+        case SINK_MESSAGE_UDP_SETUP: {
             struct pollfd *pollfd;
 
             u->rtpoll_item = pa_rtpoll_item_new(u->rtpoll, PA_RTPOLL_NEVER, 2);
             pollfd = pa_rtpoll_item_get_pollfd(u->rtpoll_item, NULL);
 
-            pollfd->fd = u->control_fd;
+            pollfd->fd = u->udp_control_fd;
             pollfd->events = POLLIN | POLLPRI;
             pollfd->revents = 0;
             pollfd++;
-            pollfd->fd = u->timing_fd;
+            pollfd->fd = u->udp_timing_fd;
             pollfd->events = POLLIN | POLLPRI;
             pollfd->revents = 0;
 
-            u->control_fd = -1;
-            u->timing_fd = -1;
+            u->udp_control_fd = -1;
+            u->udp_timing_fd = -1;
             return 0;
         }
 
-        case SINK_MESSAGE_RECORD: {
+        case SINK_MESSAGE_UDP_RECORD: {
             pa_rtpoll_set_timer_relative(u->rtpoll, pa_bytes_to_usec(u->block_size, &u->sink->sample_spec));
 
             if (u->sink->thread_info.state == PA_SINK_SUSPENDED) {
@@ -369,7 +369,7 @@ static int udp_sink_process_msg(pa_msgobject *o, int code, void *data, int64_t o
             return 0;
         }
 
-        case SINK_MESSAGE_DISCONNECTED: {
+        case SINK_MESSAGE_UDP_DISCONNECTED: {
             if (u->sink->thread_info.state == PA_SINK_SUSPENDED) {
                 pa_rtpoll_set_timer_disabled(u->rtpoll);
                 if (u->rtpoll_item)
@@ -381,8 +381,8 @@ static int udp_sink_process_msg(pa_msgobject *o, int code, void *data, int64_t o
                 pa_module_unload_request(u->module, true);
             }
 
-            u->control_fd = -1;
-            u->timing_fd = -1;
+            u->udp_control_fd = -1;
+            u->udp_timing_fd = -1;
             return 0;
         }
     }
@@ -435,22 +435,22 @@ static void sink_set_mute_cb(pa_sink *s) {
     }
 }
 
-static void raop_setup_cb(int control_fd, int timing_fd, void *userdata) {
+static void udp_setup_cb(int control_fd, int timing_fd, void *userdata) {
     struct userdata *u = userdata;
 
     pa_assert(control_fd);
     pa_assert(timing_fd);
     pa_assert(u);
 
-    u->control_fd = control_fd;
-    u->timing_fd = timing_fd;
+    u->udp_control_fd = control_fd;
+    u->udp_timing_fd = timing_fd;
 
     pa_log_debug("Connection authenticated, syncing with server...");
 
-    pa_asyncmsgq_post(u->thread_mq.inq, PA_MSGOBJECT(u->sink), SINK_MESSAGE_SETUP, NULL, 0, NULL, NULL);
+    pa_asyncmsgq_post(u->thread_mq.inq, PA_MSGOBJECT(u->sink), SINK_MESSAGE_UDP_SETUP, NULL, 0, NULL, NULL);
 }
 
-static void raop_record_cb(void *userdata) {
+static void udp_record_cb(void *userdata) {
     struct userdata *u = userdata;
 
     pa_assert(u);
@@ -460,17 +460,17 @@ static void raop_record_cb(void *userdata) {
 
     pa_log_debug("Synchronization done, pushing job to IO thread...");
 
-    pa_asyncmsgq_post(u->thread_mq.inq, PA_MSGOBJECT(u->sink), SINK_MESSAGE_RECORD, NULL, 0, NULL, NULL);
+    pa_asyncmsgq_post(u->thread_mq.inq, PA_MSGOBJECT(u->sink), SINK_MESSAGE_UDP_RECORD, NULL, 0, NULL, NULL);
 }
 
-static void raop_disconnected_cb(void *userdata) {
+static void udp_disconnected_cb(void *userdata) {
     struct userdata *u = userdata;
 
     pa_assert(u);
 
     pa_log_debug("Connection closed, informing IO thread...");
 
-    pa_asyncmsgq_post(u->thread_mq.inq, PA_MSGOBJECT(u->sink), SINK_MESSAGE_DISCONNECTED, NULL, 0, NULL, NULL);
+    pa_asyncmsgq_post(u->thread_mq.inq, PA_MSGOBJECT(u->sink), SINK_MESSAGE_UDP_DISCONNECTED, NULL, 0, NULL, NULL);
 }
 
 static void tcp_thread_func(struct userdata *u) {
@@ -561,7 +561,7 @@ static void tcp_thread_func(struct userdata *u) {
                     pa_assert(u->encoded_memchunk.length > 0);
 
                     p = pa_memblock_acquire(u->encoded_memchunk.memblock);
-                    l = pa_write(u->fd, (uint8_t*) p + u->encoded_memchunk.index, u->encoded_memchunk.length, &write_type);
+                    l = pa_write(u->tcp_fd, (uint8_t*) p + u->encoded_memchunk.index, u->encoded_memchunk.length, &write_type);
                     pa_memblock_release(u->encoded_memchunk.memblock);
 
                     pa_assert(l != 0);
@@ -610,7 +610,7 @@ static void tcp_thread_func(struct userdata *u) {
 #ifdef SIOCOUTQ
                 {
                     int l;
-                    if (ioctl(u->fd, SIOCOUTQ, &l) >= 0 && l > 0)
+                    if (ioctl(u->tcp_fd, SIOCOUTQ, &l) >= 0 && l > 0)
                         n -= (l / u->encoding_ratio);
                 }
 #endif
@@ -706,7 +706,7 @@ static void udp_thread_func(struct userdata *u) {
                     pollfd->revents = 0;
                     pa_log_debug("Received control packet.");
                     read = pa_read(pollfd->fd, packet, sizeof(packet), NULL);
-                    pa_raop_client_handle_control_packet(u->raop, packet, read);
+                    pa_raop_client_udp_handle_control_packet(u->raop, packet, read);
                 }
 
                 pollfd++;
@@ -716,14 +716,14 @@ static void udp_thread_func(struct userdata *u) {
                     pollfd->revents = 0;
                     pa_log_debug("Received timing packet.");
                     read = pa_read(pollfd->fd, packet, sizeof(packet), NULL);
-                    pa_raop_client_handle_timing_packet(u->raop, packet, read);
+                    pa_raop_client_udp_handle_timing_packet(u->raop, packet, read);
                 }
             }
 
             continue;
         }
 
-        if (!pa_raop_client_can_stream(u->raop))
+        if (!pa_raop_client_udp_can_stream(u->raop))
             continue;
         if (u->sink->thread_info.state != PA_SINK_RUNNING)
             continue;
@@ -751,7 +751,7 @@ static void udp_thread_func(struct userdata *u) {
 
         pa_assert(u->encoded_memchunk.length > 0);
 
-        pa_raop_client_send_audio_packet(u->raop, &u->encoded_memchunk, &written);
+        pa_raop_client_udp_send_audio_packet(u->raop, &u->encoded_memchunk, &written);
         pa_rtpoll_set_timer_relative(u->rtpoll, pa_bytes_to_usec(u->block_size, &u->sink->sample_spec));
 
         pa_assert(written != 0);
@@ -823,7 +823,7 @@ int pa__init(pa_module *m) {
     u->core = m->core;
     u->module = m;
     m->userdata = u;
-    u->fd = -1;
+    u->tcp_fd = -1;
     u->smoother = pa_smoother_new(
             PA_USEC_PER_SEC,
             PA_USEC_PER_SEC*2,
@@ -918,18 +918,18 @@ int pa__init(pa_module *m) {
         goto fail;
     }
 
-    pa_raop_client_set_callback(u->raop, on_connection, u);
-    pa_raop_client_set_closed_callback(u->raop, on_close, u);
+    pa_raop_client_tcp_set_callback(u->raop, tcp_on_connection, u);
+    pa_raop_client_tcp_set_closed_callback(u->raop, tcp_on_close, u);
 
     if (u->protocol == RAOP_UDP) {
         /* The number of frames per blocks is not negotiable... */
-        pa_raop_client_get_blocks_size(u->raop, &u->block_size);
+        pa_raop_client_udp_get_blocks_size(u->raop, &u->block_size);
         u->block_size *= pa_frame_size(&ss);
         pa_sink_set_max_request(u->sink, u->block_size);
 
-        pa_raop_client_set_setup_callback(u->raop, raop_setup_cb, u);
-        pa_raop_client_set_record_callback(u->raop, raop_record_cb, u);
-        pa_raop_client_set_disconnected_callback(u->raop, raop_disconnected_cb, u);
+        pa_raop_client_udp_set_setup_callback(u->raop, udp_setup_cb, u);
+        pa_raop_client_udp_set_record_callback(u->raop, udp_record_cb, u);
+        pa_raop_client_udp_set_disconnected_callback(u->raop, udp_disconnected_cb, u);
     }
 
     if (!(u->thread = pa_thread_new("raop-sink", thread_func, u))) {
@@ -1004,8 +1004,8 @@ void pa__done(pa_module *m) {
     if (u->smoother)
         pa_smoother_free(u->smoother);
 
-    if (u->fd >= 0)
-        pa_close(u->fd);
+    if (u->tcp_fd >= 0)
+        pa_close(u->tcp_fd);
 
     pa_xfree(u);
 }
