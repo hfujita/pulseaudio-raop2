@@ -173,9 +173,16 @@ static void resolver_cb(
         pa_log_debug("Found key: '%s' with value: '%s'", key, value);
 
         if (pa_streq(key, "tp")) {
-            /* Transport protocol */
-            tp = value;
-            value = NULL;
+            /* Transport protocol:
+             *  - TCP = only TCP,
+             *  - UDP = only UDP,
+             *  - TCP,UDP = both supported (UDP should be prefered) */
+             if (pa_str_in_list(value, ",", "UDP"))
+                 tp = strdup("UDP");
+            else if (pa_str_in_list(value, ",", "TCP"))
+                tp = strdup("TCP");
+            else
+                tp = strdup(value);
         } else if (pa_streq(key, "et")) {
             /* Supported encryption types:
              *  - 0 = none,
