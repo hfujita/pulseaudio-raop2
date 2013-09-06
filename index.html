@@ -56,24 +56,38 @@
 </ul><p>See the commit history for details.</p>
 
 <h1>
-<a name="current-status" class="anchor" href="#current-status"><span class="octicon octicon-link"></span></a>Current status</h1>
+<a name="news" class="anchor" href="#news"><span class="octicon octicon-link"></span></a>News</h1>
+
+<h2>
+<a name="main-branch-switched-952013" class="anchor" href="#main-branch-switched-952013"><span class="octicon octicon-link"></span></a>Main branch switched (9/5/2013)</h2>
+
+<p>I have switched to <code>raop2-for-merge</code> branch. This branch provides both TCP and UDP protocol implementations.</p>
+
+<p>If you clone the repository now, you will get the latest branch by default. If you already cloned my old <code>v4.0+raop</code> branch, the following commands should allow you to switch to the latest branch:</p>
+
+<pre><code>$ cd pulseaudio-raop2
+$ git fetch origin
+$ git checkout -b raop2-for-merge origin/raop2-for-merge
+</code></pre>
+
+<h1>
+<a name="current-status-as-of-952013" class="anchor" href="#current-status-as-of-952013"><span class="octicon octicon-link"></span></a>Current status (as of 9/5/2013)</h1>
 
 <ul>
-<li>Plays back music on Pioneer VSX-43 (AV receiver).</li>
-<li>Packet retransmission is not supported yet.</li>
+<li>Plays back music on Pioneer VSX-43 (AV receiver) and some other devices (see below for tested device list).</li>
+<li>Supposed to support both TCP an UDP protocols. However, TCP procotol is not tested at all because I don't own a device.</li>
 </ul><h2>
 <a name="known-issues" class="anchor" href="#known-issues"><span class="octicon octicon-link"></span></a>Known issues</h2>
 
-<p>As of 9/1/2013</p>
+<p>As of 9/5/2013</p>
 
 <ul>
-<li><strong>Does not work with the latest AppleTV</strong></li>
+<li><strong>May not work with the latest AppleTV</strong></li>
 <li>Sound test (launched from the GNOME sound setting dialog) does not work (no sound heard).</li>
 <li>Works reasonably with VLC/Totem/Rhythmbox but when playing music from Flash player, quite rough sound is heard.</li>
 <li>There's a huge latency. Okay for music player but absolutely terrible for movies/voice chat.</li>
-<li>The original TCP protocol support was totally overwritten and disappeared. I'm now working on this for compatibility.</li>
-</ul><h2>
-<a name="warnings" class="anchor" href="#warnings"><span class="octicon octicon-link"></span></a>Warnings</h2>
+</ul><h1>
+<a name="warnings" class="anchor" href="#warnings"><span class="octicon octicon-link"></span></a>Warnings</h1>
 
 <ul>
 <li>This is still not more than an experimental branch. It is totally unstable and may not work at all on some devices. <strong>Do not expect too much!</strong>
@@ -106,7 +120,7 @@ sudo apt-get build-dep pulseaudio
 <pre><code>$ git clone git@github.com:hfujita/pulseaudio-raop2.git # if you have github account and registered your key
 </code></pre>
 
-<p>You should be in the <code>v4.0+raop</code> branch.</p>
+<p>You should be in the <code>raop2-for-merge</code> branch.</p>
 
 <p><strong>Note:</strong> tarball or zip <strong>won't work</strong> because PulseAudio build system relies on git revision information.</p>
 
@@ -223,7 +237,8 @@ $ git pull
 </ul><h1>
 <a name="contact-information" class="anchor" href="#contact-information"><span class="octicon octicon-link"></span></a>Contact information</h1>
 
-<p>Please e-mail me at Hajime Fujita <a href="mailto:crisp.fujita@nifty.com">crisp.fujita@nifty.com</a>.</p>
+<p>Please e-mail me at Hajime Fujita <a href="mailto:crisp.fujita@nifty.com">crisp.fujita@nifty.com</a>.
+Also, this topic (raop2 support) is actively discussed at <a href="https://bugs.freedesktop.org/show_bug.cgi?id=42804">PulseAudio Bug 42804</a>.</p>
 
 <h1>
 <a name="related-information" class="anchor" href="#related-information"><span class="octicon octicon-link"></span></a>Related information</h1>
