@@ -766,7 +766,11 @@ static void udp_thread_func(struct userdata *u) {
 
         pa_assert(u->encoded_memchunk.length > 0);
 
-        pa_raop_client_udp_send_audio_packet(u->raop, &u->encoded_memchunk, &written);
+        written = pa_raop_client_udp_send_audio_packet(u->raop,&u->encoded_memchunk);
+        if (written < 0) {
+            pa_log("Failed to send UDP packet: %s", pa_cstrerror(errno));
+            goto fail;
+        }
 
         /* Determine when to wake up next:
            next_target = prev_target + interval, unless we passed
@@ -778,13 +782,6 @@ static void udp_thread_func(struct userdata *u) {
             wakeup_target += sleep_interval;
         /* Sleep until next packet transmission */
         pa_rtpoll_set_timer_absolute(u->rtpoll, wakeup_target);
-
-        pa_assert(written != 0);
-
-        if (written < 0) {
-            pa_log("Failed to write data to FIFO: %s", pa_cstrerror(errno));
-            goto fail;
-        }
 
         u->offset += written;
         u->encoding_overhead += overhead;
