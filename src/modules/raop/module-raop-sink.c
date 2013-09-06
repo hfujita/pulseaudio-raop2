@@ -118,6 +118,10 @@ struct userdata {
     /* Members only for the UDP protocol */
     int udp_control_fd;
     int udp_timing_fd;
+
+    /* For UDP thread wakeup clock calculation */
+    pa_usec_t udp_playback_start;
+    uint32_t  udp_sent_packets;
 };
 
 static const char* const valid_modargs[] = {
@@ -281,6 +285,22 @@ static int tcp_sink_process_msg(pa_msgobject *o, int code, void *data, int64_t o
     return pa_sink_process_msg(o, code, data, offset, chunk);
 }
 
+static void udp_start_wakeup_clock(struct userdata *u) {
+    pa_usec_t now = pa_rtclock_now();
+
+    u->udp_playback_start = now;
+    u->udp_sent_packets = 0;
+    pa_rtpoll_set_timer_absolute(u->rtpoll, now);
+}
+
+static pa_usec_t udp_next_wakeup_clock(struct userdata *u) {
+    pa_usec_t intvl = pa_bytes_to_usec(u->block_size * u->udp_sent_packets,
+                                       &u->sink->sample_spec);
+    /* FIXME: how long until (u->block_size * u->udp_sent_packets) wraps?? */
+
+    return u->udp_playback_start + intvl;
+}
+
 static int udp_sink_process_msg(pa_msgobject *o, int code, void *data, int64_t offset, pa_memchunk *chunk) {
     struct userdata *u = PA_SINK(o)->userdata;
 
@@ -318,7 +338,7 @@ static int udp_sink_process_msg(pa_msgobject *o, int code, void *data, int64_t o
                         /* Connecting will trigger a RECORD */
                         pa_raop_client_connect(u->raop);
                     }
-                    pa_rtpoll_set_timer_relative(u->rtpoll, pa_bytes_to_usec(u->block_size, &u->sink->sample_spec));
+                    udp_start_wakeup_clock(u);
 
                     break;
 
@@ -359,7 +379,7 @@ static int udp_sink_process_msg(pa_msgobject *o, int code, void *data, int64_t o
         }
 
         case SINK_MESSAGE_UDP_RECORD: {
-            pa_rtpoll_set_timer_relative(u->rtpoll, pa_bytes_to_usec(u->block_size, &u->sink->sample_spec));
+            udp_start_wakeup_clock(u);
 
             if (u->sink->thread_info.state == PA_SINK_SUSPENDED) {
                 /* Our stream has been suspended so we just flush it... */
@@ -678,11 +698,6 @@ finish:
 }
 
 static void udp_thread_func(struct userdata *u) {
-    /* Sleep interval per audio packet */
-    pa_usec_t sleep_interval = pa_bytes_to_usec(u->block_size,
-                                              &u->sink->sample_spec);
-    pa_usec_t wakeup_target = 0; /* Next wakeup target clock (in us) */
-
     pa_assert(u);
 
     pa_log_debug("UDP thread starting up");
@@ -772,16 +787,9 @@ static void udp_thread_func(struct userdata *u) {
             goto fail;
         }
 
-        /* Determine when to wake up next:
-           next_target = prev_target + interval, unless we passed
-           prev_target + interval.
-           In such a case just sleep for one interval */
-        if (wakeup_target + sleep_interval < pa_rtclock_now())
-            wakeup_target = pa_rtclock_now() + sleep_interval;
-        else
-            wakeup_target += sleep_interval;
+        u->udp_sent_packets++;
         /* Sleep until next packet transmission */
-        pa_rtpoll_set_timer_absolute(u->rtpoll, wakeup_target);
+        pa_rtpoll_set_timer_absolute(u->rtpoll, udp_next_wakeup_clock(u));
 
         u->offset += written;
         u->encoding_overhead += overhead;
