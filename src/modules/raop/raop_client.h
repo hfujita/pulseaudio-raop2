@@ -27,6 +27,8 @@
 #include <pulsecore/core.h>
 #include <pulsecore/memchunk.h>
 
+#define UDP_FRAMES_PER_PACKET 352
+
 typedef enum pa_raop_protocol {
     RAOP_TCP,
     RAOP_UDP,
