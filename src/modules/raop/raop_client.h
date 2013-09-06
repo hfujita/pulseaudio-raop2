@@ -51,7 +51,7 @@ int pa_raop_client_udp_handle_timing_packet(pa_raop_client *c, const uint8_t pac
 [], ssize_t size);
 int pa_raop_client_udp_handle_control_packet(pa_raop_client *c, const uint8_t packet[], ssize_t size);
 int pa_raop_client_udp_get_blocks_size(pa_raop_client *c, size_t *size);
-int pa_raop_client_udp_send_audio_packet(pa_raop_client *c, pa_memchunk *block, ssize_t *written);
+ssize_t pa_raop_client_udp_send_audio_packet(pa_raop_client *c, pa_memchunk *block);
 
 typedef void (*pa_raop_client_cb_t)(int fd, void *userdata);
 void pa_raop_client_tcp_set_callback(pa_raop_client *c, pa_raop_client_cb_t callback, void *userdata);

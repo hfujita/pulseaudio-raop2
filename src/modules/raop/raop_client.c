@@ -519,26 +519,24 @@ static int udp_send_sync_packet(pa_raop_client *c, uint32_t stamp) {
     return rv;
 }
 
-static int udp_send_audio_packet(pa_raop_client *c, uint32_t *buffer, size_t size, ssize_t *written) {
-    ssize_t length = 0;
-    int rv = 1;
+static void udp_build_audio_header(pa_raop_client *c, uint32_t *buffer, size_t size) {
+    pa_assert(size >= sizeof(udp_audio_header));
 
     memcpy(buffer, udp_audio_header, sizeof(udp_audio_header));
     if (c->udp_first_packet)
-        buffer[0] |= ((uint32_t) 0x80) << 8;
+        buffer[0] |= htonl((uint32_t) 0x80 << 16);
     buffer[0] |= htonl((uint32_t) c->seq);
     buffer[1] = htonl(c->rtptime);
     buffer[2] = htonl(c->udp_ssrc);
+}
 
-    length = pa_loop_write(c->udp_stream_fd, buffer, size, NULL);
-    if (length == ((ssize_t) size))
-        rv = 0;
+static ssize_t udp_send_audio_packet(pa_raop_client *c, uint8_t *buffer, size_t size) {
+    ssize_t length;
 
-    if (written != NULL)
-        *written = length;
+    length = pa_write(c->udp_stream_fd, buffer, size, NULL);
     c->seq++;
 
-    return rv;
+    return length;
 }
 
 static void do_rtsp_announce(pa_raop_client *c) {
@@ -1191,10 +1189,9 @@ int pa_raop_client_udp_get_blocks_size(pa_raop_client *c, size_t *size) {
     return rv;
 }
 
-int pa_raop_client_udp_send_audio_packet(pa_raop_client *c, pa_memchunk *block, ssize_t *written) {
-    uint32_t *buf = NULL;
-    ssize_t length = 0;
-    int rv = 0;
+ssize_t pa_raop_client_udp_send_audio_packet(pa_raop_client *c, pa_memchunk *block) {
+    uint8_t *buf = NULL;
+    ssize_t len;
 
     pa_assert(c);
     pa_assert(block);
@@ -1207,19 +1204,30 @@ int pa_raop_client_udp_send_audio_packet(pa_raop_client *c, pa_memchunk *block, 
         c->udp_sync_count++;
     }
 
-    buf = (uint32_t *) pa_memblock_acquire(block->memblock);
-    if (buf != NULL && block->length > 0)
-        rv = udp_send_audio_packet(c, buf + block->index, block->length, &length);
+    buf = pa_memblock_acquire(block->memblock);
+    pa_assert(buf);
+    pa_assert(block->length > 0);
+    udp_build_audio_header(c, (uint32_t *) (buf + block->index), block->length);
+    len = udp_send_audio_packet(c, buf + block->index, block->length);
     pa_memblock_release(block->memblock);
-    block->index += length;
-    block->length -= length;
-    if (written != NULL)
-        *written = length;
+
+    if (len > 0) {
+        pa_assert((size_t) len <= block->length);
+        /* UDP packet has to be sent at once, so it is meaningless to
+           preseve the partial data
+           FIXME: This won't happen at least in *NIX systems?? */
+        if (block->length > (size_t) len) {
+            pa_log_warn("Tried to send %zu bytes but managed to send %zu bytes", block->length, len);
+            len = block->length;
+        }
+        block->index += block->length;
+        block->length = 0;
+    }
 
     if (c->udp_first_packet)
         c->udp_first_packet = false;
 
-    return rv;
+    return len;
 }
 
 int pa_raop_client_set_volume(pa_raop_client *c, pa_volume_t volume) {
