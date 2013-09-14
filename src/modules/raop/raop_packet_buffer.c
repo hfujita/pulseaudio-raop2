@@ -154,7 +154,7 @@ ssize_t pa_raop_pb_read_packet(pa_raop_packet_buffer *pb, uint16_t seq_num, uint
         return -1;
 
     index = (uint16_t) (seq_num - pb->first_seq_num);
-    if (index >= pb->size)
+    if (index >= pb->count)
         return -1;
 
     /*  Index of the requested packet in the buffer is calculated
