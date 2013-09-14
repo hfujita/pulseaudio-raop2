@@ -52,6 +52,7 @@ struct pa_raop_packet_buffer {
     size_t   start;         /* index of oldest packet */
     size_t   count;         /* number of packets in buffer */
     uint16_t first_seq_num; /* Sequence number of first packet in buffer */
+    uint16_t latest_seq_num; /* Debug purpose */
     pa_raop_packet_element *packets; /* Packet element pointer */
 };
 
@@ -59,13 +60,20 @@ pa_raop_packet_buffer *pa_raop_pb_new(size_t size) {
     pa_raop_packet_buffer *pb = pa_xmalloc0(sizeof(*pb));
 
     pb->size = size;
+    pb->packets = (pa_raop_packet_element *)
+        pa_xmalloc(size * sizeof(pa_raop_packet_element));
+
+    pa_raop_pb_clear(pb);
+
+    return pb;
+}
+
+void pa_raop_pb_clear(pa_raop_packet_buffer *pb) {
     pb->start = 0;
     pb->count = 0;
     pb->first_seq_num = 0;
-    pb->packets = (pa_raop_packet_element *)
-        pa_xmalloc0(size * sizeof(pa_raop_packet_element));
-
-    return pb;
+    pb->latest_seq_num = 0;
+    memset(pb->packets, 0, pb->size * sizeof(pa_raop_packet_element));
 }
 
 void pa_raop_pb_delete(pa_raop_packet_buffer *pb) {
@@ -88,6 +96,8 @@ static pa_raop_packet_element *pb_prepare_write(pa_raop_packet_buffer *pb, uint1
     /* Set first packet sequence number in buffer if buffer is empty */
     if (pb_is_empty(pb))
         pb->first_seq_num = seq;
+    else
+        pa_assert((uint16_t) (pb->latest_seq_num + 1) == seq);
 
     packet = &pb->packets[end];
 
@@ -99,6 +109,8 @@ static pa_raop_packet_element *pb_prepare_write(pa_raop_packet_buffer *pb, uint1
         pb->first_seq_num = pb->packets[pb->start].seq_num;
     } else
         ++ pb->count;
+
+    pb->latest_seq_num = seq;
 
     return packet;
 }

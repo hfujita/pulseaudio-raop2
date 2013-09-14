@@ -957,6 +957,8 @@ static void udp_rtsp_cb(pa_rtsp_client *rtsp, pa_rtsp_state state, pa_headerlist
 
             pa_log_debug("RTSP control channel closed (teardown)");
 
+            pa_raop_pb_clear(c->packet_buffer);
+
             pa_rtsp_client_free(c->rtsp);
             pa_xfree(c->sid);
             c->rtsp = NULL;
@@ -992,6 +994,8 @@ static void udp_rtsp_cb(pa_rtsp_client *rtsp, pa_rtsp_state state, pa_headerlist
             }
 
             pa_log_debug("RTSP control channel closed (disconnected)");
+
+            pa_raop_pb_clear(c->packet_buffer);
 
             pa_rtsp_client_free(c->rtsp);
             pa_xfree(c->sid);
