@@ -33,6 +33,7 @@ typedef struct pa_raop_packet_buffer pa_raop_packet_buffer;
 /* Allocates a new circular packet buffer
    size: Maximum number of packets to store */
 pa_raop_packet_buffer *pa_raop_pb_new(size_t size);
+void pa_raop_pb_clear(pa_raop_packet_buffer *pb);
 void pa_raop_pb_delete(pa_raop_packet_buffer *pb);
 
 void pa_raop_pb_write_packet(pa_raop_packet_buffer *pb, uint16_t seq_num, const uint8_t *packet_data, ssize_t packet_length);
