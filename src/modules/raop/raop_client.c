@@ -1339,7 +1339,7 @@ int pa_raop_client_set_volume(pa_raop_client *c, pa_volume_t volume) {
     param = pa_sprintf_malloc("volume: %0.6f\r\n",  db);
 
     /* We just hit and hope, cannot wait for the callback. */
-    if (c->rtsp != NULL)
+    if (c->rtsp != NULL && pa_rtsp_exec_ready(c->rtsp))
         rv = pa_rtsp_setparameter(c->rtsp, param);
     pa_xfree(param);
 
