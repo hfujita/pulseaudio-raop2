@@ -28,6 +28,7 @@
 #include <errno.h>
 #include <unistd.h>
 #include <sys/ioctl.h>
+#include <math.h>
 
 #ifdef HAVE_SYS_FILIO_H
 #include <sys/filio.h>
@@ -1317,6 +1318,19 @@ ssize_t pa_raop_client_udp_send_audio_packet(pa_raop_client *c, pa_memchunk *blo
     return len;
 }
 
+/* Adjust volume so that it fits into VOLUME_DEF <= v <= 0 dB */
+pa_volume_t pa_raop_client_adjust_volume(pa_raop_client *c, pa_volume_t volume) {
+    double minv, maxv;
+
+    if (c->protocol != RAOP_UDP)
+        return volume;
+
+    maxv = pa_sw_volume_from_dB(0.0);
+    minv = maxv * pow(10.0, (double) VOLUME_DEF / 60.0);
+
+    return volume - volume * (minv / maxv) + minv;
+}
+
 int pa_raop_client_set_volume(pa_raop_client *c, pa_volume_t volume) {
     int rv = 0;
     double db;
@@ -1329,6 +1343,8 @@ int pa_raop_client_set_volume(pa_raop_client *c, pa_volume_t volume) {
         db = VOLUME_MIN;
     else if (db > VOLUME_MAX)
         db = VOLUME_MAX;
+
+    pa_log_debug("volume=%u db=%.6f", volume, db);
 
     param = pa_sprintf_malloc("volume: %0.6f\r\n",  db);
 
