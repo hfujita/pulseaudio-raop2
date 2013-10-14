@@ -958,7 +958,7 @@ int pa__init(pa_module *m) {
     }
 
     encryption = pa_modargs_get_value(ma, "encryption", NULL);
-    pa_raop_client_set_encryption(u->raop, !pa_streq(encryption, "none"));
+    pa_raop_client_set_encryption(u->raop, !pa_safe_streq(encryption, "none"));
 
     pa_raop_client_tcp_set_callback(u->raop, tcp_on_connection, u);
     pa_raop_client_tcp_set_closed_callback(u->raop, tcp_on_close, u);
