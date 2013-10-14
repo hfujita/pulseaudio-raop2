@@ -598,20 +598,35 @@ static void do_rtsp_announce(pa_raop_client *c) {
         rtrimchar(sac, '=');
         pa_rtsp_add_header(c->rtsp, "Apple-Challenge", sac);
     }
-    sdp = pa_sprintf_malloc(
-        "v=0\r\n"
-        "o=iTunes %s 0 IN IP4 %s\r\n"
-        "s=iTunes\r\n"
-        "c=IN IP4 %s\r\n"
-        "t=0 0\r\n"
-        "m=audio 0 RTP/AVP 96\r\n"
-        "a=rtpmap:96 AppleLossless\r\n"
-        "a=fmtp:96 %d 0 16 40 10 14 2 255 0 0 44100\r\n"
-        "a=rsaaeskey:%s\r\n"
-        "a=aesiv:%s\r\n",
-        c->sid, ip, c->host,
-        c->protocol == RAOP_TCP ? 4096 : UDP_FRAMES_PER_PACKET,
-        key, iv);
+
+    if (c->encryption)
+        sdp = pa_sprintf_malloc(
+            "v=0\r\n"
+            "o=iTunes %s 0 IN IP4 %s\r\n"
+            "s=iTunes\r\n"
+            "c=IN IP4 %s\r\n"
+            "t=0 0\r\n"
+            "m=audio 0 RTP/AVP 96\r\n"
+            "a=rtpmap:96 AppleLossless\r\n"
+            "a=fmtp:96 %d 0 16 40 10 14 2 255 0 0 44100\r\n"
+            "a=rsaaeskey:%s\r\n"
+            "a=aesiv:%s\r\n",
+            c->sid, ip, c->host,
+            c->protocol == RAOP_TCP ? 4096 : UDP_FRAMES_PER_PACKET,
+            key, iv);
+    else
+        sdp = pa_sprintf_malloc(
+            "v=0\r\n"
+            "o=iTunes %s 0 IN IP4 %s\r\n"
+            "s=iTunes\r\n"
+            "c=IN IP4 %s\r\n"
+            "t=0 0\r\n"
+            "m=audio 0 RTP/AVP 96\r\n"
+            "a=rtpmap:96 AppleLossless\r\n"
+            "a=fmtp:96 %d 0 16 40 10 14 2 255 0 0 44100\r\n",
+            c->sid, ip, c->host,
+            c->protocol == RAOP_TCP ? 4096 : UDP_FRAMES_PER_PACKET);
+
     pa_rtsp_announce(c->rtsp, sdp);
     pa_xfree(key);
     pa_xfree(iv);
