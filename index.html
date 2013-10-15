@@ -36,7 +36,7 @@
 
 <p>This is an ongoing effort to make it possible to stream musics from <a href="http://www.freedesktop.org/wiki/Software/PulseAudio/">PulseAudio</a> to recent AirPlay-capable devices (e.g. Apple TV, AV receivers).</p>
 
-<p>Apparently there are two versions in AirPlay protocol. The older version (version 1) only uses TCP for audio streaming. Version 1 is supported by PulseAudio, in a form of raop module. (RAOP stands for Remote Audio Output Protocol, a protocol underneath AirPlay.) However the newer version 2, which uses UDP as well, is not supported by PulseAudio (as of v4.0). Probably most AirPlay devices today (8/2013) support version 2, which makes it impossible for PulseAudio users to play their music over AirPlay.</p>
+<p>Apparently there are two versions in AirPlay protocol. The older version (version 1) only uses TCP for audio streaming. Version 1 is supported by PulseAudio, in a form of raop module. (RAOP stands for Remote Audio Output Protocol, a protocol underneath AirPlay.) However the newer version 2, which uses UDP as well, is not supported by PulseAudio (as of v4.0). Probably most AirPlay devices today (10/2013) support version 2, which makes it impossible for PulseAudio users to play their music over AirPlay.</p>
 
 <h2>
 <a name="brief-history" class="anchor" href="#brief-history"><span class="octicon octicon-link"></span></a>Brief history</h2>
@@ -76,18 +76,17 @@ $ git checkout -b raop2-for-merge origin/raop2-for-merge
 </code></pre>
 
 <h1>
-<a name="current-status-as-of-952013" class="anchor" href="#current-status-as-of-952013"><span class="octicon octicon-link"></span></a>Current status (as of 9/5/2013)</h1>
+<a name="current-status-as-of-10142013" class="anchor" href="#current-status-as-of-10142013"><span class="octicon octicon-link"></span></a>Current status (as of 10/14/2013)</h1>
 
 <ul>
-<li>Plays back music on Pioneer VSX-43 (AV receiver) and some other devices (see below for tested device list).</li>
+<li>Plays back music on Pioneer VSX-43 (AV receiver), Apple TV 3rd gen. and some other devices (see below for tested device list).</li>
 <li>Supposed to support both TCP an UDP protocols. However, TCP procotol is not tested at all because I don't own a device.</li>
 </ul><h2>
 <a name="known-issues" class="anchor" href="#known-issues"><span class="octicon octicon-link"></span></a>Known issues</h2>
 
-<p>As of 9/5/2013</p>
+<p>As of 10/14/2013</p>
 
 <ul>
-<li><strong>May not work with the latest AppleTV</strong></li>
 <li>Sound test (launched from the GNOME sound setting dialog) does not work (no sound heard).</li>
 <li>Works reasonably with VLC/Totem/Rhythmbox but when playing music from Flash player, quite rough sound is heard.</li>
 <li>There's a huge latency. Okay for music player but absolutely terrible for movies/voice chat.</li>
@@ -237,10 +236,12 @@ $ git pull
 
 <ul>
 <li>Pioneer VSX-43</li>
+<li>Apple TV 3rd generation</li>
 <li>Minx Air 200 (<a href="https://bugs.freedesktop.org/show_bug.cgi?id=42804#c30">thanks to Matthias</a>)</li>
 <li>shairport (<a href="https://bugs.freedesktop.org/show_bug.cgi?id=42804#c29">thanks to Karl Stavestrand</a>)</li>
 <li>Pioneer VSX-922 (<a href="https://bugs.freedesktop.org/show_bug.cgi?id=42804#c43">thanks to Matthias</a>)</li>
 <li>NOCS NS2 (Thanks to Kim Tore Jensen)</li>
+<li>Freebox Revolution Server (Thanks to Pierre Gaudillere)</li>
 </ul><h1>
 <a name="contact-information" class="anchor" href="#contact-information"><span class="octicon octicon-link"></span></a>Contact information</h1>
 
