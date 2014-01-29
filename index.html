@@ -36,7 +36,7 @@
 
 <p>This is an ongoing effort to make it possible to stream musics from <a href="http://www.freedesktop.org/wiki/Software/PulseAudio/">PulseAudio</a> to recent AirPlay-capable devices (e.g. Apple TV, AV receivers).</p>
 
-<p>Apparently there are two versions in AirPlay protocol. The older version (version 1) only uses TCP for audio streaming. Version 1 is supported by PulseAudio, in a form of raop module. (RAOP stands for Remote Audio Output Protocol, a protocol underneath AirPlay.) However the newer version 2, which uses UDP as well, is not supported by PulseAudio (as of v4.0). Probably most AirPlay devices today (10/2013) support version 2, which makes it impossible for PulseAudio users to play their music over AirPlay.</p>
+<p>Apparently there are two versions in AirPlay protocol. The older version (version 1) only uses TCP for audio streaming. Version 1 is supported by PulseAudio, in a form of raop module. (RAOP stands for Remote Audio Output Protocol, a protocol underneath AirPlay.) However the newer version 2, which uses UDP as well, is not supported by PulseAudio (as of v4.0). Probably most AirPlay devices today support version 2, which makes it impossible for PulseAudio users to play their music over AirPlay.</p>
 
 <h2>
 <a name="brief-history" class="anchor" href="#brief-history"><span class="octicon octicon-link"></span></a>Brief history</h2>
@@ -57,6 +57,11 @@
 
 <h1>
 <a name="news" class="anchor" href="#news"><span class="octicon octicon-link"></span></a>News</h1>
+
+<h2>
+<a name="main-branch-is-now-raop2-for-merge2-1282014" class="anchor" href="#main-branch-is-now-raop2-for-merge2-1282014"><span class="octicon octicon-link"></span></a>Main branch is now raop2-for-merge2 (1/28/2014)</h2>
+
+<p>I have switched to <code>raop2-for-merge2</code> branch.</p>
 
 <h2>
 <a name="main-branch-switched-again-9132013" class="anchor" href="#main-branch-switched-again-9132013"><span class="octicon octicon-link"></span></a>Main branch switched again (9/13/2013)</h2>
@@ -125,7 +130,7 @@ sudo apt-get build-dep pulseaudio
 <pre><code>$ git clone git@github.com:hfujita/pulseaudio-raop2.git # if you have github account and registered your key
 </code></pre>
 
-<p>You should be in the <code>raop2-for-merge</code> branch.</p>
+<p>You should be in the <code>raop2-for-merge2</code> branch.</p>
 
 <p><strong>Note:</strong> tarball or zip <strong>won't work</strong> because PulseAudio build system relies on git revision information.</p>
 
@@ -224,6 +229,7 @@ $ git pull
 <li>VLC</li>
 <li>Totem</li>
 <li>Rhythmbox</li>
+<li>Amarok (thanks to Ewan Cochevelou)</li>
 </ul><h2>
 <a name="rough-sound" class="anchor" href="#rough-sound"><span class="octicon octicon-link"></span></a>Rough sound</h2>
 
@@ -246,6 +252,14 @@ $ git pull
 <li>Pioneer VSX-822 (Thanks to Martin Owens)</li>
 <li>Yamaha RX-A820 (Thanks to Patryk Zawadzki)</li>
 <li>JBL On Air (Thanks to Aaron Brady)</li>
+<li>Pioneer XW-SMA4 (thanks to Giuseppe Iannello)</li>
+<li>Sony SA-NS510 (thanks to Giuseppe Iannello)</li>
+<li>
+<a href="http://ihomeaudiointl.com/iW2BC/">iHome IW2</a> (thanks to Nicolas VEYSSIERE)</li>
+<li>Pioneer X-HM71 (thanks to Patrice Mandin)</li>
+<li>Philips AD7050W/10 (thanks to Ralf Ertzinger)</li>
+<li>Sony STR-DN840 (thanks to Cyrus Boadway)</li>
+<li>PURE Contour 200i Air (thanks to Johannes Schinko)</li>
 </ul><h1>
 <a name="contact-information" class="anchor" href="#contact-information"><span class="octicon octicon-link"></span></a>Contact information</h1>
 
