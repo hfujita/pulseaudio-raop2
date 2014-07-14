@@ -1044,13 +1044,21 @@ pa_raop_client* pa_raop_client_new(pa_core *core, const char *host,
                                    pa_raop_protocol_t protocol,
                                    pa_sample_spec spec) {
     pa_parsed_address a;
-    pa_raop_client *c = pa_xnew0(pa_raop_client, 1);
+    pa_raop_client* c;
 
     pa_assert(core);
     pa_assert(host);
 
     if (pa_parse_address(host, &a) < 0 || a.type == PA_PARSED_ADDRESS_UNIX)
         return NULL;
+        
+    if(a.type == PA_PARSED_ADDRESS_TCP6)
+    {
+        pa_log_warn("Host: %s",host);
+        pa_log_warn("IPV6 is not supported!");
+        return NULL;
+    }
+    c = pa_xnew0(pa_raop_client, 1);
 
     c->core = core;
     c->tcp_fd = -1;
@@ -1147,7 +1155,7 @@ int pa_raop_client_flush(pa_raop_client *c) {
 
     pa_assert(c);
 
-    if (c->rtsp != NULL) {
+    if (c->rtsp != NULL && pa_rtsp_exec_ready(c->rtsp)) {
         rv = pa_rtsp_flush(c->rtsp, c->seq, c->rtptime);
         c->udp_sync_count = 0;
     }
