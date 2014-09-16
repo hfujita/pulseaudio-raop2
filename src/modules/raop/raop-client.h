@@ -26,55 +26,60 @@
 
 #include <pulsecore/core.h>
 #include <pulsecore/memchunk.h>
-
-#define UDP_FRAMES_PER_PACKET 352
+#include <pulsecore/rtpoll.h>
 
 typedef enum pa_raop_protocol {
-    RAOP_TCP,
-    RAOP_UDP,
+    PA_RAOP_PROTOCOL_TCP,
+    PA_RAOP_PROTOCOL_UDP
 } pa_raop_protocol_t;
+
+typedef enum pa_raop_encryption {
+    PA_RAOP_ENCRYPTION_NONE,
+    PA_RAOP_ENCRYPTION_RSA,
+    PA_RAOP_ENCRYPTION_FAIRPLAY,
+    PA_RAOP_ENCRYPTION_MFISAP,
+    PA_RAOP_ENCRYPTION_FAIRPLAY_SAP25
+} pa_raop_encryption_t;
+
+typedef enum pa_raop_codec {
+    PA_RAOP_CODEC_PCM,
+    PA_RAOP_CODEC_ALAC,
+    PA_RAOP_CODEC_AAC,
+    PA_RAOP_CODEC_AAC_ELD
+} pa_raop_codec_t;
 
 typedef struct pa_raop_client pa_raop_client;
 
-pa_raop_client* pa_raop_client_new(pa_core *core, const char *host, pa_raop_protocol_t protocol);
+typedef enum pa_raop_state {
+    PA_RAOP_INVALID_STATE,
+    PA_RAOP_AUTHENTICATED,
+    PA_RAOP_CONNECTED,
+    PA_RAOP_RECORDING,
+    PA_RAOP_DISCONNECTED
+} pa_raop_state_t;
+
+pa_raop_client* pa_raop_client_new(pa_core *core, const char *host, pa_raop_protocol_t protocol,
+                                   pa_raop_encryption_t encryption, pa_raop_codec_t codec);
 void pa_raop_client_free(pa_raop_client *c);
 
-int pa_raop_client_authenticate (pa_raop_client *c, const char *password);
-int pa_raop_client_connect(pa_raop_client *c);
+int pa_raop_client_authenticate(pa_raop_client *c, const char *password);
+bool pa_raop_client_is_authenticated(pa_raop_client *c);
+
+int pa_raop_client_announce(pa_raop_client *c);
+bool pa_raop_client_is_alive(pa_raop_client *c);
+bool pa_raop_client_can_stream(pa_raop_client *c);
+int pa_raop_client_stream(pa_raop_client *c);
+int pa_raop_client_set_volume(pa_raop_client *c, pa_volume_t volume);
 int pa_raop_client_flush(pa_raop_client *c);
 int pa_raop_client_teardown(pa_raop_client *c);
 
-int pa_raop_client_udp_is_authenticated(pa_raop_client *c);
-int pa_raop_client_udp_is_alive(pa_raop_client *c);
-int pa_raop_client_udp_can_stream(pa_raop_client *c);
-int pa_raop_client_udp_stream(pa_raop_client *c);
-
-void pa_raop_client_set_encryption(pa_raop_client *c, int encryption);
+void pa_raop_client_get_frames_per_block(pa_raop_client *c, size_t *size);
+bool pa_raop_client_register_pollfd(pa_raop_client *c, pa_rtpoll *poll, pa_rtpoll_item **poll_item);
 pa_volume_t pa_raop_client_adjust_volume(pa_raop_client *c, pa_volume_t volume);
-int pa_raop_client_set_volume(pa_raop_client *c, pa_volume_t volume);
-int pa_raop_client_encode_sample(pa_raop_client *c, pa_memchunk *raw, pa_memchunk *encoded);
+void pa_raop_client_handle_oob_packet(pa_raop_client *c, const int fd, const uint8_t packet[], ssize_t size);
+ssize_t pa_raop_client_send_audio_packet(pa_raop_client *c, pa_memchunk *block, size_t offset);
 
-int pa_raop_client_udp_handle_timing_packet(pa_raop_client *c, const uint8_t packet[], ssize_t size);
-int pa_raop_client_udp_handle_control_packet(pa_raop_client *c, const uint8_t packet[], ssize_t size);
-int pa_raop_client_udp_get_blocks_size(pa_raop_client *c, size_t *size);
-ssize_t pa_raop_client_udp_send_audio_packet(pa_raop_client *c, pa_memchunk *block);
-
-typedef void (*pa_raop_client_cb_t)(int fd, void *userdata);
-void pa_raop_client_tcp_set_callback(pa_raop_client *c, pa_raop_client_cb_t callback, void *userdata);
-
-typedef void (*pa_raop_client_closed_cb_t)(void *userdata);
-void pa_raop_client_tcp_set_closed_callback(pa_raop_client *c, pa_raop_client_closed_cb_t callback, void *userdata);
-
-typedef void (*pa_raop_client_auth_cb_t)(int status, void *userdata);
-void pa_raop_client_udp_set_auth_callback(pa_raop_client *c, pa_raop_client_auth_cb_t callback, void *userdata);
-
-typedef void (*pa_raop_client_setup_cb_t)(int control_fd, int timing_fd, void *userdata);
-void pa_raop_client_udp_set_setup_callback(pa_raop_client *c, pa_raop_client_setup_cb_t callback, void *userdata);
-
-typedef void (*pa_raop_client_record_cb_t)(void *userdata);
-void pa_raop_client_udp_set_record_callback(pa_raop_client *c, pa_raop_client_record_cb_t callback, void *userdata);
-
-typedef void (*pa_raop_client_disconnected_cb_t)(void *userdata);
-void pa_raop_client_udp_set_disconnected_callback(pa_raop_client *c, pa_raop_client_disconnected_cb_t callback, void *userdata);
+typedef void (*pa_raop_client_state_cb_t)(pa_raop_state_t state, void *userdata);
+void pa_raop_client_set_state_callback(pa_raop_client *c, pa_raop_client_state_cb_t callback, void *userdata);
 
 #endif

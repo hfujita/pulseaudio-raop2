@@ -34,7 +34,7 @@
 #include "raop-packet-buffer.h"
 
 /* FRAMES_PER_PACKET*2*2 + sizeof(udp_audio_header) + sizeof(ALAC header), unencoded */
-#define PACKET_SIZE_MAX (UDP_FRAMES_PER_PACKET*2*2 + 12 + 7)
+#define PACKET_SIZE_MAX (352*2*2 + 12 + 7) /* FIXME; hardcoded constant ! */
 /* Header room for packet retransmission header */
 #define RETRANS_HEADER_ROOM 4
 

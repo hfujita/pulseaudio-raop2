@@ -38,17 +38,20 @@
 #include <pulse/timeval.h>
 #include <pulse/sample.h>
 
+#include <pulsecore/core.h>
 #include <pulsecore/core-error.h>
 #include <pulsecore/core-rtclock.h>
 #include <pulsecore/core-util.h>
 #include <pulsecore/iochannel.h>
 #include <pulsecore/arpa-inet.h>
+#include <pulsecore/socket-client.h>
 #include <pulsecore/socket-util.h>
 #include <pulsecore/log.h>
 #include <pulsecore/parseaddr.h>
 #include <pulsecore/macro.h>
 #include <pulsecore/memchunk.h>
 #include <pulsecore/random.h>
+#include <pulsecore/poll.h>
 
 #include "raop-client.h"
 #include "raop-packet-buffer.h"
@@ -57,34 +60,29 @@
 
 #include "rtsp_client.h"
 
-#define JACK_STATUS_DISCONNECTED 0
-#define JACK_STATUS_CONNECTED 1
-
-#define JACK_TYPE_ANALOG 0
-#define JACK_TYPE_DIGITAL 1
-
-#define VOLUME_DEF -30
-#define VOLUME_MIN -144
-#define VOLUME_MAX 0
-
-#define USER_AGENT "iTunes/11.0.4 (Windows; N)"
-#define USER_NAME "iTunes"
-
 #define DEFAULT_RAOP_PORT 5000
-#define UDP_DEFAULT_AUDIO_PORT 6000
-#define UDP_DEFAULT_CONTROL_PORT 6001
-#define UDP_DEFAULT_TIMING_PORT 6002
+
+#define FRAMES_PER_TCP_PACKET 4096
+#define FRAMES_PER_UDP_PACKET 352
+
+#define DEFAULT_TCP_AUDIO_PORT   6000
+#define DEFAULT_UDP_AUDIO_PORT   6000
+#define DEFAULT_UDP_CONTROL_PORT 6001
+#define DEFAULT_UDP_TIMING_PORT  6002
+
+#define DEFAULT_USER_AGENT "iTunes/11.0.4 (Windows; N)"
+#define DEFAULT_USER_NAME  "iTunes"
+
+#define JACK_STATUS_DISCONNECTED 0
+#define JACK_STATUS_CONNECTED    1
+#define JACK_TYPE_ANALOG         0
+#define JACK_TYPE_DIGITAL        1
+
+#define VOLUME_MAX  0.0
+#define VOLUME_DEF -30.0
+#define VOLUME_MIN -144.0
 
 #define UDP_DEFAULT_PKT_BUF_SIZE 1000
-
-typedef enum {
-    UDP_PAYLOAD_TIMING_REQUEST = 0x52,
-    UDP_PAYLOAD_TIMING_RESPONSE = 0x53,
-    UDP_PAYLOAD_SYNCHRONIZATION = 0x54,
-    UDP_PAYLOAD_RETRANSMIT_REQUEST = 0x55,
-    UDP_PAYLOAD_RETRANSMIT_REPLY = 0x56,
-    UDP_PAYLOAD_AUDIO_DATA = 0x60
-} pa_raop_udp_payload_type;
 
 struct pa_raop_client {
     pa_core *core;
@@ -92,99 +90,128 @@ struct pa_raop_client {
     uint16_t port;
     pa_rtsp_client *rtsp;
     char *sci, *sid;
-    char *pwd;
+    char *password;
+
+    pa_raop_protocol_t protocol;
+    pa_raop_encryption_t encryption;
+    pa_raop_codec_t codec;
+
+    pa_raop_secret *secret;
+
+    int tcp_sfd;
+
+    int udp_sfd;
+    int udp_cfd;
+    int udp_tfd;
+
+    pa_raop_packet_buffer *pbuf;
+
+    uint16_t seq;
+    uint32_t rtptime;
+    bool is_recording;
+    uint32_t ssrc;
+
+    bool is_first_packet;
+    uint32_t sync_interval;
+    uint32_t sync_count;
 
     uint8_t jack_type;
     uint8_t jack_status;
 
-    pa_raop_protocol_t protocol;
-
-    int encryption; /* Enable encryption? */
-    pa_raop_secret *aes;
-
-    uint16_t seq;
-    uint32_t rtptime;
-
-    /* Members only for the TCP protocol */
-    pa_socket_client *tcp_sc;
-    int tcp_fd;
-
-    pa_raop_client_cb_t tcp_callback;
-    void *tcp_userdata;
-    pa_raop_client_closed_cb_t tcp_closed_callback;
-    void *tcp_closed_userdata;
-
-    /* Members only for the UDP protocol */
-    uint16_t udp_my_control_port;
-    uint16_t udp_my_timing_port;
-    uint16_t udp_server_control_port;
-    uint16_t udp_server_timing_port;
-
-    int udp_stream_fd;
-    int udp_control_fd;
-    int udp_timing_fd;
-
-    uint32_t udp_ssrc;
-
-    bool is_recording;
-
-    bool udp_first_packet;
-    uint32_t udp_sync_interval;
-    uint32_t udp_sync_count;
-
-    pa_raop_client_auth_cb_t udp_auth_callback;
-    void *udp_auth_userdata;
-
-    pa_raop_client_setup_cb_t udp_setup_callback;
-    void *udp_setup_userdata;
-
-    pa_raop_client_record_cb_t udp_record_callback;
-    void *udp_record_userdata;
-
-    pa_raop_client_disconnected_cb_t udp_disconnected_callback;
-    void *udp_disconnected_userdata;
-
-    pa_raop_packet_buffer *packet_buffer;
+    pa_raop_client_state_cb_t state_callback;
+    void *state_userdata;
 };
 
-/* Timming packet header (8x8):
- *  [0]   RTP v2: 0x80,
- *  [1]   Payload type: 0x53 | marker bit: 0x80,
- *  [2,3] Sequence number: 0x0007,
- *  [4,7] Timestamp: 0x00000000 (unused). */
-static const uint8_t udp_timming_header[8] = {
-    0x80, 0xd3, 0x00, 0x07,
-    0x00, 0x00, 0x00, 0x00
-};
-
-/* Sync packet header (8x8):
- *  [0]   RTP v2: 0x80,
- *  [1]   Payload type: 0x54 | marker bit: 0x80,
- *  [2,3] Sequence number: 0x0007,
- *  [4,7] Timestamp: 0x00000000 (to be set). */
-static const uint8_t udp_sync_header[8] = {
-    0x80, 0xd4, 0x00, 0x07,
-    0x00, 0x00, 0x00, 0x00
-};
-
+/* Audio TCP packet header [16x8] (cf. rfc4571):
+ *  [0,1]   Frame marker; seems always 0x2400
+ *  [2,3]   RTP packet size (following): 0x0000 (to be set)
+ *   [4,5]   RTP v2: 0x80
+ *   [5]     Payload type: 0x60 | Marker bit: 0x80 (always set)
+ *   [6,7]   Sequence number: 0x0000 (to be set)
+ *   [8,11]  Timestamp: 0x00000000 (to be set)
+ *   [12,15] SSRC: 0x00000000 (to be set) */
+#define PAYLOAD_TCP_AUDIO_DATA 0x60
 static const uint8_t tcp_audio_header[16] = {
     0x24, 0x00, 0x00, 0x00,
-    0xF0, 0xFF, 0x00, 0x00,
+    0x80, 0xe0, 0x00, 0x00,
     0x00, 0x00, 0x00, 0x00,
-    0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00
 };
 
-/* Audio packet header (12x8):
- *  [0]    RTP v2: 0x80,
- *  [1]    Payload type: 0x60,
- *  [2,3]  Sequence number: 0x0000 (to be set),
- *  [4,7]  Timestamp: 0x00000000 (to be set),
- *  [8,12] SSRC: 0x00000000 (to be set).*/
+/* Audio UDP packet header [12x8] (cf. rfc3550):
+ *  [0]    RTP v2: 0x80
+ *  [1]    Payload type: 0x60
+ *  [2,3]  Sequence number: 0x0000 (to be set)
+ *  [4,7]  Timestamp: 0x00000000 (to be set)
+ *  [8,12] SSRC: 0x00000000 (to be set) */
+#define PAYLOAD_UDP_AUDIO_DATA 0x60
 static const uint8_t udp_audio_header[12] = {
     0x80, 0x60, 0x00, 0x00,
     0x00, 0x00, 0x00, 0x00,
     0x00, 0x00, 0x00, 0x00
 };
+
+/* Audio retransmission UDP packet header [4x8]:
+ *  [0] RTP v2: 0x80
+ *  [1] Payload type: 0x56 | Marker bit: 0x80 (always set)
+ *  [2] Unknown; seems always 0x01
+ *  [3] Unknown; seems some random number around 0x20~0x40 */
+#define PAYLOAD_RETRANSMIT_REQUEST 0x55
+#define PAYLOAD_RETRANSMIT_REPLY   0x56
+static const uint8_t udp_audio_retrans_header[4] = {
+    0x80, 0xd6, 0x00, 0x00
+};
+
+/* Sync packet header [8x8] (cf. rfc3550):
+ *  [0]   RTP v2: 0x80
+ *  [1]   Payload type: 0x54 | Marker bit: 0x80 (always set)
+ *  [2,3] Sequence number: 0x0007
+ *  [4,7] Timestamp: 0x00000000 (to be set) */
+static const uint8_t udp_sync_header[8] = {
+    0x80, 0xd4, 0x00, 0x07,
+    0x00, 0x00, 0x00, 0x00
+};
+
+/* Timming packet header [8x8] (cf. rfc3550):
+ *  [0]   RTP v2: 0x80
+ *  [1]   Payload type: 0x53 | Marker bit: 0x80 (always set)
+ *  [2,3] Sequence number: 0x0007
+ *  [4,7] Timestamp: 0x00000000 (unused) */
+#define PAYLOAD_TIMING_REQUEST  0x52
+#define PAYLOAD_TIMING_REPLY    0x53
+static const uint8_t udp_timming_header[8] = {
+    0x80, 0xd3, 0x00, 0x07,
+    0x00, 0x00, 0x00, 0x00
+};
+
+/**
+ * Function to trim a given character at the end of a string (no realloc).
+ * @param str Pointer to string
+ * @param rc Character to trim
+ */
+static inline void rtrim_char(char *str, char rc) {
+    char *sp = str + strlen(str) - 1;
+    while (sp >= str && *sp == rc) {
+        *sp = '\0';
+        sp -= 1;
+    }
+}
+
+/**
+ * Function to convert a timeval to ntp timestamp.
+ * @param tv Pointer to the timeval structure
+ * @return The NTP timestamp
+ */
+static inline uint64_t timeval_to_ntp(struct timeval *tv) {
+    uint64_t ntp = 0;
+
+    /* Converting micro seconds to a fraction. */
+    ntp = (uint64_t) tv->tv_usec * UINT32_MAX / PA_USEC_PER_SEC;
+    /* Moving reference from  1 Jan 1970 to 1 Jan 1900 (seconds). */
+    ntp |= (uint64_t) (tv->tv_sec + 0x83aa7e80) << 32;
+
+    return ntp;
+}
 
 /**
  * Function to write bits into a buffer.
@@ -194,7 +221,7 @@ static const uint8_t udp_audio_header[12] = {
  * @param data The data to write
  * @param data_bit_len The number of bits from data to write
  */
-static inline void bit_writer(uint8_t **buffer, uint8_t *bit_pos, int *size, uint8_t data, uint8_t data_bit_len) {
+static inline void bit_writer(uint8_t **buffer, uint8_t *bit_pos, size_t *size, uint8_t data, uint8_t data_bit_len) {
     int bits_left, bit_overflow;
     uint8_t bit_data;
 
@@ -238,51 +265,394 @@ static inline void bit_writer(uint8_t **buffer, uint8_t *bit_pos, int *size, uin
     }
 }
 
-static inline void rtrimchar(char *str, char rc) {
-    char *sp = str + strlen(str) - 1;
-    while (sp >= str && *sp == rc) {
-        *sp = '\0';
-        sp -= 1;
-    }
+static size_t write_PCM_data(uint8_t *packet, const size_t max, uint8_t *raw, size_t *length) {
+    size_t size = 0;
+
+    pa_memzero(packet, max);
+
+    pa_log("Raw PCM not implemented...");
+
+    return size;
 }
 
-static void tcp_on_connection(pa_socket_client *sc, pa_iochannel *io, void *userdata) {
-    pa_raop_client *c = userdata;
+static size_t write_ALAC_data(uint8_t *packet, const size_t max, uint8_t *raw, size_t *length, bool compress) {
+    uint32_t nbs = (*length / 2) / 2;
+    uint8_t *ibp, *maxibp;
+    uint8_t *bp, bpos;
+    size_t size = 0;
 
-    pa_assert(sc);
-    pa_assert(c);
-    pa_assert(c->tcp_sc == sc);
-    pa_assert(c->tcp_fd < 0);
-    pa_assert(c->tcp_callback);
+    bp = packet;
+    pa_memzero(packet, max);
+    size = bpos = 0;
 
-    pa_socket_client_unref(c->tcp_sc);
-    c->tcp_sc = NULL;
+    bit_writer(&bp, &bpos, &size, 1, 3); /* channel=1, stereo */
+    bit_writer(&bp, &bpos, &size, 0, 4); /* Unknown */
+    bit_writer(&bp, &bpos, &size, 0, 8); /* Unknown */
+    bit_writer(&bp, &bpos, &size, 0, 4); /* Unknown */
+    bit_writer(&bp, &bpos, &size, 1, 1); /* Hassize */
+    bit_writer(&bp, &bpos, &size, 0, 2); /* Unused */
+    bit_writer(&bp, &bpos, &size, 1, 1); /* Is-not-compressed */
+    /* Size of data, integer, big endian. */
+    bit_writer(&bp, &bpos, &size, (nbs >> 24) & 0xff, 8);
+    bit_writer(&bp, &bpos, &size, (nbs >> 16) & 0xff, 8);
+    bit_writer(&bp, &bpos, &size, (nbs >> 8)  & 0xff, 8);
+    bit_writer(&bp, &bpos, &size, (nbs)       & 0xff, 8);
 
-    if (!io) {
-        pa_log("Connection failed: %s", pa_cstrerror(errno));
-        return;
+    ibp = raw;
+    maxibp = raw + (4 * nbs) - 4;
+    while (ibp <= maxibp) {
+        /* Byte swap stereo data. */
+        bit_writer(&bp, &bpos, &size, *(ibp + 1), 8);
+        bit_writer(&bp, &bpos, &size, *(ibp + 0), 8);
+        bit_writer(&bp, &bpos, &size, *(ibp + 3), 8);
+        bit_writer(&bp, &bpos, &size, *(ibp + 2), 8);
+        ibp += 4;
     }
 
-    c->tcp_fd = pa_iochannel_get_send_fd(io);
-
-    pa_iochannel_set_noclose(io, true);
-    pa_iochannel_free(io);
-
-    pa_make_tcp_socket_low_delay(c->tcp_fd);
-
-    pa_log_debug("Connection established");
-    c->tcp_callback(c->tcp_fd, c->tcp_userdata);
+    *length = (ibp - raw);
+    return size;
 }
 
-static inline uint64_t timeval_to_ntp(struct timeval *tv) {
-    uint64_t ntp = 0;
+static size_t write_AAC_data(uint8_t *packet, const size_t max, uint8_t *raw, size_t *length) {
+    size_t size = 0;
 
-    /* Converting micro seconds to a fraction. */
-    ntp = (uint64_t) tv->tv_usec * UINT32_MAX / PA_USEC_PER_SEC;
-    /* Moving reference from  1 Jan 1970 to 1 Jan 1900 (seconds). */
-    ntp |= (uint64_t) (tv->tv_sec + 0x83aa7e80) << 32;
+    pa_memzero(packet, max);
 
-    return ntp;
+    pa_log("AAC encoding not implemented...");
+
+    return size;
+}
+
+static size_t build_tcp_audio_packet(pa_raop_client *c, uint8_t *raw, size_t *index, size_t *length, uint32_t **packet) {
+    const size_t max = sizeof(tcp_audio_header) + 8 + 16384;
+    uint32_t *buffer = NULL;
+    size_t size, head;
+
+    *packet = NULL;
+    if (!(buffer = pa_xmalloc0(max)))
+        return 0;
+
+    size = head = sizeof(tcp_audio_header);
+    memcpy(buffer, tcp_audio_header, sizeof(tcp_audio_header));
+    buffer[1] |= htonl((uint32_t) c->seq);
+    buffer[2] = htonl(c->rtptime);
+    buffer[3] = htonl(c->ssrc);
+
+    if (c->codec == PA_RAOP_CODEC_PCM)
+        size += write_PCM_data(((uint8_t *) buffer + head), max - head, raw, length);
+    else if (c->codec == PA_RAOP_CODEC_ALAC)
+        size += write_ALAC_data(((uint8_t *) buffer + head), max - head, raw, length, false);
+    else
+        size += write_AAC_data(((uint8_t *) buffer + head), max - head, raw, length);
+    c->rtptime += *length / 4;
+
+    buffer[0] |= htonl((uint32_t) size - 4);
+    if (c->encryption == PA_RAOP_ENCRYPTION_RSA)
+        pa_raop_aes_encrypt(c->secret, (uint8_t *) buffer + head, size - head);
+
+    *packet = buffer;
+    return size;
+}
+
+static ssize_t send_tcp_audio_packet(pa_raop_client *c, pa_memchunk *block, size_t offset) {
+    static uint32_t * packet = NULL;
+    static size_t size, sent;
+    double progress = 0.0;
+    size_t index, length;
+    uint8_t *raw = NULL;
+    ssize_t written;
+
+    if (!packet) {
+        index = block->index;
+        length = block->length;
+        raw = pa_memblock_acquire(block->memblock);
+
+        pa_assert(raw);
+        pa_assert(index == offset);
+        pa_assert(length > 0);
+
+        size = build_tcp_audio_packet(c, raw, &index, &length, &packet);
+        sent = 0;
+    }
+
+    written = -1;
+    if (packet != NULL && size > 0)
+        written = pa_write(c->tcp_sfd, packet + sent, size - sent, NULL);
+    if (block->index == offset)
+        c->seq++;
+    if (sent == 0)
+        pa_memblock_release(block->memblock);
+    if (written > 0) {
+        sent += written;
+        progress = (double) sent / (double) size;
+        index = (block->index + block->length) * progress;
+        length = (block->index + block->length) - index;
+        block->length = length;
+        block->index = index;
+    }
+
+    if ((size - sent) <= 0) {
+        pa_xfree(packet);
+        packet = NULL;
+    }
+
+    return written;
+}
+
+static size_t build_udp_audio_packet(pa_raop_client *c, uint8_t *raw, size_t *index, size_t *length, uint32_t **packet) {
+    const size_t max = sizeof(udp_audio_header) + 8 + 1408;
+    uint32_t *buffer = NULL;
+    size_t size, head;
+
+    *packet = NULL;
+    if (!(buffer = pa_xmalloc0(max)))
+        return 0;
+
+    size = head = sizeof(udp_audio_header);
+    memcpy(buffer, udp_audio_header, sizeof(udp_audio_header));
+    if (c->is_first_packet)
+        buffer[0] |= htonl((uint32_t) 0x80 << 16);
+    buffer[0] |= htonl((uint32_t) c->seq);
+    buffer[1] = htonl(c->rtptime);
+    buffer[2] = htonl(c->ssrc);
+
+    if (c->codec == PA_RAOP_CODEC_PCM)
+        size += write_PCM_data(((uint8_t *) buffer + head), max - head, raw + *index, length);
+    else if (c->codec == PA_RAOP_CODEC_ALAC)
+        size += write_ALAC_data(((uint8_t *) buffer + head), max - head, raw + *index, length, false);
+    else
+        size += write_AAC_data(((uint8_t *) buffer + head), max - head, raw + *index, length);
+    c->rtptime += *length / 4;
+
+    if (c->encryption == PA_RAOP_ENCRYPTION_RSA)
+        pa_raop_aes_encrypt(c->secret, (uint8_t *) buffer + head, size - head);
+
+    *index += *length;
+    *length = 0;
+    /* It is meaningless to preseve the partial data -> */
+    *packet = buffer;
+    return size;
+}
+
+static ssize_t send_udp_audio_packet(pa_raop_client *c, pa_memchunk *block, size_t offset) {
+    uint32_t *packet = NULL;
+    size_t index, length, size;
+    uint8_t *raw = NULL;
+    ssize_t written;
+
+    index = block->index;
+    length = block->length;
+    raw = pa_memblock_acquire(block->memblock);
+
+    pa_assert(raw);
+    /* <- UDP packet has to be sent at once ! */
+    pa_assert(index == offset);
+    pa_assert(length > 0);
+
+    written = -1;
+    size = build_udp_audio_packet(c, raw, &index, &length, &packet);
+    if (packet != NULL && size > 0)
+        written = pa_write(c->udp_sfd, packet, size, NULL);
+    if (written < 0 && (errno == EAGAIN || errno == EWOULDBLOCK))
+        pa_log_debug("Discarding UDP (audio, seq=%d) packet due to EAGAIN (%s)", c->seq, pa_cstrerror(errno));
+    c->seq++;
+
+    /* Store packet for resending in the packet buffer (UDP). */
+    pa_raop_pb_write_packet(c->pbuf, c->seq, raw + block->index, block->length);
+    pa_xfree(packet);
+
+    pa_memblock_release(block->memblock);
+    block->length = length;
+    block->index = index;
+
+    if (written < 0)
+        return (ssize_t) size;
+    return written;
+}
+
+static size_t rebuild_udp_audio_packet(pa_raop_client *c, uint16_t seq, uint32_t **packet) {
+    size_t size = sizeof(udp_audio_retrans_header);
+    uint32_t *buffer = NULL;
+    uint8_t *data = NULL;
+
+    size += pa_raop_pb_read_packet(c->pbuf, seq, &data);
+    if (size == sizeof(udp_audio_retrans_header))
+        return 0;
+    if (!(buffer = pa_xmalloc0(size)))
+        return 0;
+
+    memcpy(buffer, udp_audio_retrans_header, sizeof(udp_audio_retrans_header));
+    buffer[0] |= htonl((uint32_t) seq);
+
+    *packet = buffer;
+    return size;
+}
+
+static ssize_t resend_udp_audio_packets(pa_raop_client *c, uint16_t seq, uint16_t nbp) {
+    ssize_t total = 0;
+    int i = 0;
+
+    for (i = 0; i < nbp; i++) {
+        uint32_t * packet = NULL;
+        ssize_t written = 0;
+        size_t size = 0;
+
+        size = rebuild_udp_audio_packet(c, seq, &packet);
+        if (packet != NULL && size > 0)
+            written = pa_write(c->udp_cfd, packet, size, NULL);
+        if (written < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
+            pa_log_debug("Discarding UDP (audio-restransmitted, seq=%d) packet due to EAGAIN", c->seq);
+            continue;
+        }
+
+        if (written > 0)
+            total +=  written;
+    }
+
+    return total;
+}
+
+static size_t build_udp_sync_packet(pa_raop_client *c, uint32_t stamp, uint32_t **packet) {
+    const size_t size = sizeof(udp_sync_header) + 12;
+    const uint32_t delay = 88200;
+    uint32_t *buffer = NULL;
+    uint64_t transmitted = 0;
+    struct timeval tv;
+
+    *packet = NULL;
+    if (!(buffer = pa_xmalloc0(size)))
+        return 0;
+
+    memcpy(buffer, udp_sync_header, sizeof(udp_sync_header));
+    if (c->is_first_packet)
+        buffer[0] |= 0x10;
+    stamp -= delay;
+    buffer[1] = htonl(stamp);
+    /* Set the transmited timestamp to current time. */
+    transmitted = timeval_to_ntp(pa_rtclock_get(&tv));
+    buffer[2] = htonl(transmitted >> 32);
+    buffer[3] = htonl(transmitted & 0xffffffff);
+    stamp += delay;
+    buffer[4] = htonl(stamp);
+
+    *packet = buffer;
+    return size;
+}
+
+static ssize_t send_udp_sync_packet(pa_raop_client *c, uint32_t stamp) {
+    uint32_t * packet = NULL;
+    ssize_t written = 0;
+    size_t size = 0;
+
+    size = build_udp_sync_packet(c, stamp, &packet);
+    if (packet != NULL && size > 0)
+        written = pa_loop_write(c->udp_cfd, packet, size, NULL);
+
+    return written;
+}
+
+static size_t handle_udp_control_packet(pa_raop_client *c, const uint8_t packet[], ssize_t size) {
+    uint8_t payload = 0;
+    uint16_t seq, nbp = 0;
+    ssize_t written = 0;
+
+    /* Control packets are 8 bytes long:  */
+    if (size != 8 || packet[0] != 0x80) {
+        pa_log_debug("Received an invalid control packet...");
+        return 1;
+    }
+
+    seq = ntohs((uint16_t) packet[4]);
+    nbp = ntohs((uint16_t) packet[6]);
+    if (nbp <= 0) {
+        pa_log_debug("Received an invalid control packet...");
+        return 1;
+    }
+
+    /* The market bit is always set (see rfc3550 for packet structure) ! */
+    payload = packet[1] ^ 0x80;
+    switch (payload) {
+        case PAYLOAD_RETRANSMIT_REQUEST:
+            pa_log_debug("Resending %u packets starting at %u", nbp, seq);
+            written = resend_udp_audio_packets(c, seq, nbp);
+            break;
+        case PAYLOAD_RETRANSMIT_REPLY:
+        default:
+            pa_log_debug("Got an unexpected payload type on control channel (%u) !", payload);
+            break;
+    }
+
+    return written;
+}
+
+static size_t build_udp_timing_packet(pa_raop_client *c, const uint32_t data[6], uint64_t received, uint32_t **packet) {
+    const size_t size = sizeof(udp_timming_header) + 24;
+    uint32_t *buffer = NULL;
+    uint64_t transmitted = 0;
+    struct timeval tv;
+
+    *packet = NULL;
+    if (!(buffer = pa_xmalloc0(size)))
+        return 0;
+
+    memcpy(buffer, udp_timming_header, sizeof(udp_timming_header));
+    /* Copying originate timestamp from the incoming request packet. */
+    buffer[2] = data[4];
+    buffer[3] = data[5];
+    /* Set the receive timestamp to reception time. */
+    buffer[4] = htonl(received >> 32);
+    buffer[5] = htonl(received & 0xffffffff);
+    /* Set the transmit timestamp to current time. */
+    transmitted = timeval_to_ntp(pa_rtclock_get(&tv));
+    buffer[6] = htonl(transmitted >> 32);
+    buffer[7] = htonl(transmitted & 0xffffffff);
+
+    *packet = buffer;
+    return size;
+}
+
+static ssize_t send_udp_timing_packet(pa_raop_client *c, const uint32_t data[6], uint64_t received) {
+    uint32_t * packet = NULL;
+    ssize_t written = 0;
+    size_t size = 0;
+
+    size = build_udp_timing_packet(c, data, received, &packet);
+    if (packet != NULL && size > 0)
+        written = pa_loop_write(c->udp_tfd, packet, size, NULL);
+
+    return written;
+}
+
+static size_t handle_udp_timing_packet(pa_raop_client *c, const uint8_t packet[], ssize_t size) {
+    const uint32_t * data = NULL;
+    uint8_t payload = 0;
+    struct timeval tv;
+    size_t written = 0;
+    uint64_t rci = 0;
+
+    /* Timing packets are 32 bytes long: 1 x 8 RTP header (no ssrc) + 3 x 8 NTP timestamps */
+    if (size != 32 || packet[0] != 0x80) {
+        pa_log_debug("Received an invalid UDP timing packet...");
+        return 0;
+    }
+
+    rci = timeval_to_ntp(pa_rtclock_get(&tv));
+    data = (uint32_t *) (packet + sizeof(udp_timming_header));
+
+    /* The market bit is always set (see rfc3550 for packet structure) ! */
+    payload = packet[1] ^ 0x80;
+    switch (payload) {
+        case PAYLOAD_TIMING_REQUEST:
+            pa_log_debug("Sending timing packet at %lu", rci);
+            written = send_udp_timing_packet(c, data, rci);
+            break;
+        case PAYLOAD_TIMING_REPLY:
+        default:
+            pa_log_debug("Got an unexpected payload type on timing channel (%u) !", payload);
+            break;
+    }
+
+    return written;
 }
 
 static int connect_udp_socket(pa_raop_client *c, int fd, uint16_t port) {
@@ -427,347 +797,162 @@ fail:
     return -1;
 }
 
-static int udp_send_timing_packet(pa_raop_client *c, const uint32_t data[6], uint64_t received) {
-    uint32_t packet[8];
-    struct timeval tv;
-    ssize_t written = 0;
-    uint64_t trs = 0;
-    int rv = 1;
+static void tcp_connection_cb(pa_socket_client *sc, pa_iochannel *io, void *userdata) {
+    pa_raop_client *c = userdata;
 
-    memcpy(packet, udp_timming_header, sizeof(udp_timming_header));
-    /* Copying originate timestamp from the incoming request packet. */
-    packet[2] = data[4];
-    packet[3] = data[5];
-    /* Set the receive timestamp to reception time. */
-    packet[4] = htonl(received >> 32);
-    packet[5] = htonl(received & 0xffffffff);
-    /* Set the transmit timestamp to current time. */
-    trs = timeval_to_ntp(pa_rtclock_get(&tv));
-    packet[6] = htonl(trs >> 32);
-    packet[7] = htonl(trs & 0xffffffff);
-
-    written = pa_loop_write(c->udp_timing_fd, packet, sizeof(packet), NULL);
-    if (written == sizeof(packet))
-        rv = 0;
-
-    return rv;
-}
-
-static int udp_send_sync_packet(pa_raop_client *c, uint32_t stamp) {
-    const uint32_t delay = 88200;
-    uint32_t packet[5];
-    struct timeval tv;
-    ssize_t written = 0;
-    uint64_t trs = 0;
-    int rv = 1;
-
-    memcpy(packet, udp_sync_header, sizeof(udp_sync_header));
-    if (c->udp_first_packet)
-        packet[0] |= 0x10;
-    stamp -= delay;
-    packet[1] = htonl(stamp);
-    /* Set the transmited timestamp to current time. */
-    trs = timeval_to_ntp(pa_rtclock_get(&tv));
-    packet[2] = htonl(trs >> 32);
-    packet[3] = htonl(trs & 0xffffffff);
-    stamp += delay;
-    packet[4] = htonl(stamp);
-
-    written = pa_loop_write(c->udp_control_fd, packet, sizeof(packet), NULL);
-    if (written == sizeof(packet))
-        rv = 0;
-
-    return rv;
-}
-
-static void udp_build_audio_header(pa_raop_client *c, uint32_t *buffer, size_t size) {
-    pa_assert(size >= sizeof(udp_audio_header));
-
-    memcpy(buffer, udp_audio_header, sizeof(udp_audio_header));
-    if (c->udp_first_packet)
-        buffer[0] |= htonl((uint32_t) 0x80 << 16);
-    buffer[0] |= htonl((uint32_t) c->seq);
-    buffer[1] = htonl(c->rtptime);
-    buffer[2] = htonl(c->udp_ssrc);
-}
-
-/* Audio retransmission header:
- * [0]    RTP v2: 0x80
- * [1]    Payload type: 0x56 + 0x80 (marker == on)
- * [2]    Unknown; seems always 0x01
- * [3]    Unknown; seems some random number around 0x20~0x40
- * [4,5]  Original RTP header htons(0x8060)
- * [6,7]  Packet sequence number to be retransmitted
- * [8,11] Original RTP timestamp on the lost packet */
-static void udp_build_retrans_header(uint32_t *buffer, size_t size, uint16_t seq_num) {
-    uint8_t x = 0x30; /* FIXME: what's this?? */
-
-    pa_assert(size >= sizeof(uint32_t) * 2);
-
-    buffer[0] = htonl((uint32_t) 0x80000000
-                      | ((uint32_t) UDP_PAYLOAD_RETRANSMIT_REPLY | 0x80) << 16
-                      | 0x0100
-                      | x);
-    buffer[1] = htonl((uint32_t) 0x80600000 | seq_num);
-}
-
-static ssize_t udp_send_audio_packet(pa_raop_client *c, bool retrans, uint8_t *buffer, size_t size) {
-    ssize_t length;
-    int fd = retrans ? c->udp_control_fd : c->udp_stream_fd;
-
-    length = pa_write(fd, buffer, size, NULL);
-    if (length < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
-        pa_log_debug("Discarding audio packet %d due to EAGAIN", c->seq);
-        length = size;
-    }
-    return length;
-}
-
-static void do_rtsp_announce(pa_raop_client *c) {
-    char *key, *iv, *sac = NULL, *sdp;
-    uint16_t rand_data;
-    const char *ip;
-    char *url;
-
-    ip = pa_rtsp_localip(c->rtsp);
-    /* First of all set the url properly. */
-    url = pa_sprintf_malloc("rtsp://%s/%s", ip, c->sid);
-    pa_rtsp_set_url(c->rtsp, url);
-    pa_xfree(url);
-
-    /* UDP protocol does not need "Apple-Challenge" at announce. */
-    if (c->protocol == RAOP_TCP) {
-        pa_random(&rand_data, sizeof(rand_data));
-        pa_raop_base64_encode(&rand_data, 8*sizeof(rand_data), &sac);
-        rtrimchar(sac, '=');
-        pa_rtsp_add_header(c->rtsp, "Apple-Challenge", sac);
-    }
-
-    if (c->encryption) {
-        iv = pa_raop_secret_get_iv(c->aes);
-        rtrimchar(iv, '=');
-        key = pa_raop_secret_get_key(c->aes);
-        rtrimchar(key, '=');
-
-        sdp = pa_sprintf_malloc(
-            "v=0\r\n"
-            "o=iTunes %s 0 IN IP4 %s\r\n"
-            "s=iTunes\r\n"
-            "c=IN IP4 %s\r\n"
-            "t=0 0\r\n"
-            "m=audio 0 RTP/AVP 96\r\n"
-            "a=rtpmap:96 AppleLossless\r\n"
-            "a=fmtp:96 %d 0 16 40 10 14 2 255 0 0 44100\r\n"
-            "a=rsaaeskey:%s\r\n"
-            "a=aesiv:%s\r\n",
-            c->sid, ip, c->host,
-            c->protocol == RAOP_TCP ? 4096 : UDP_FRAMES_PER_PACKET,
-            key, iv);
-
-        pa_xfree(iv);
-        pa_xfree(key);
-    } else {
-        sdp = pa_sprintf_malloc(
-            "v=0\r\n"
-            "o=iTunes %s 0 IN IP4 %s\r\n"
-            "s=iTunes\r\n"
-            "c=IN IP4 %s\r\n"
-            "t=0 0\r\n"
-            "m=audio 0 RTP/AVP 96\r\n"
-            "a=rtpmap:96 AppleLossless\r\n"
-            "a=fmtp:96 %d 0 16 40 10 14 2 255 0 0 44100\r\n",
-            c->sid, ip, c->host,
-            c->protocol == RAOP_TCP ? 4096 : UDP_FRAMES_PER_PACKET);
-    }
-
-    pa_rtsp_announce(c->rtsp, sdp);
-
-    pa_xfree(sac);
-    pa_xfree(sdp);
-}
-
-static void tcp_rtsp_cb(pa_rtsp_client *rtsp, pa_rtsp_state state, pa_rtsp_status status, pa_headerlist* headers, void *userdata) {
-    pa_raop_client* c = userdata;
+    pa_assert(sc);
     pa_assert(c);
-    pa_assert(rtsp);
-    pa_assert(rtsp == c->rtsp);
 
-    switch (state) {
-        case STATE_CONNECT: {
-            pa_log_debug("RAOP: CONNECTED");
-            do_rtsp_announce(c);
-            break;
-        }
+    pa_socket_client_unref(sc);
 
-        case STATE_OPTIONS:
-            pa_log_debug("RAOP: OPTIONS");
-            break;
-
-        case STATE_ANNOUNCE:
-            pa_log_debug("RAOP: ANNOUNCED");
-            pa_rtsp_remove_header(c->rtsp, "Apple-Challenge");
-            pa_rtsp_setup(c->rtsp, NULL);
-            break;
-
-        case STATE_SETUP: {
-            char *aj = pa_xstrdup(pa_headerlist_gets(headers, "Audio-Jack-Status"));
-            pa_log_debug("RAOP: SETUP");
-            if (aj) {
-                char *token, *pc;
-                char delimiters[] = ";";
-                const char* token_state = NULL;
-                c->jack_type = JACK_TYPE_ANALOG;
-                c->jack_status = JACK_STATUS_DISCONNECTED;
-
-                while ((token = pa_split(aj, delimiters, &token_state))) {
-                    if ((pc = strstr(token, "="))) {
-                      *pc = 0;
-                      if (pa_streq(token, "type") && pa_streq(pc+1, "digital")) {
-                          c->jack_type = JACK_TYPE_DIGITAL;
-                      }
-                    } else {
-                        if (pa_streq(token, "connected"))
-                            c->jack_status = JACK_STATUS_CONNECTED;
-                    }
-                    pa_xfree(token);
-                }
-                pa_xfree(aj);
-            } else {
-                pa_log_warn("Audio Jack Status missing");
-            }
-            pa_rtsp_record(c->rtsp, &c->seq, &c->rtptime);
-            break;
-        }
-
-        case STATE_RECORD: {
-            uint32_t port = pa_rtsp_serverport(c->rtsp);
-            pa_log_debug("RAOP: RECORDED");
-
-            if (!(c->tcp_sc = pa_socket_client_new_string(c->core->mainloop, true, c->host, port))) {
-                pa_log("failed to connect to server '%s:%d'", c->host, port);
-                return;
-            }
-            pa_socket_client_set_callback(c->tcp_sc, tcp_on_connection, c);
-            break;
-        }
-
-        case STATE_FLUSH:
-            pa_log_debug("RAOP: FLUSHED");
-            break;
-
-        case STATE_TEARDOWN:
-            pa_log_debug("RAOP: TEARDOWN");
-            break;
-
-        case STATE_SET_PARAMETER:
-            pa_log_debug("RAOP: SET_PARAMETER");
-            break;
-
-        case STATE_DISCONNECTED:
-            pa_assert(c->tcp_closed_callback);
-            pa_assert(c->rtsp);
-
-            pa_log_debug("RTSP control channel closed");
-            pa_rtsp_client_free(c->rtsp);
-            c->rtsp = NULL;
-            if (c->tcp_fd > 0) {
-                /* We do not close the fd, we leave it to the closed callback to do that */
-                c->tcp_fd = -1;
-            }
-            if (c->tcp_sc) {
-                pa_socket_client_unref(c->tcp_sc);
-                c->tcp_sc = NULL;
-            }
-            pa_xfree(c->sid);
-            c->sid = NULL;
-            c->tcp_closed_callback(c->tcp_closed_userdata);
-            break;
+    if (!io) {
+        pa_log("Connection failed: %s", pa_cstrerror(errno));
+        return;
     }
+
+    c->tcp_sfd = pa_iochannel_get_send_fd(io);
+    pa_iochannel_set_noclose(io, true);
+    pa_make_tcp_socket_low_delay(c->tcp_sfd);
+
+    pa_iochannel_free(io);
+
+    pa_log_debug("Connection established (TCP)");
+
+    if (c->state_callback)
+        c->state_callback(PA_RAOP_CONNECTED, c->state_userdata);
 }
 
-static void udp_rtsp_cb(pa_rtsp_client *rtsp, pa_rtsp_state state, pa_rtsp_status status, pa_headerlist *headers, void *userdata) {
+static void rtsp_stream_cb(pa_rtsp_client *rtsp, pa_rtsp_state_t state, pa_rtsp_status_t status, pa_headerlist *headers, void *userdata) {
     pa_raop_client *c = userdata;
 
     pa_assert(c);
     pa_assert(rtsp);
     pa_assert(rtsp == c->rtsp);
-    pa_assert(STATUS_OK == status);
 
     switch (state) {
         case STATE_CONNECT: {
-            uint16_t rand;
-            char *sac;
+            char *key, *iv, *sdp = NULL;
+            int frames = 0;
+            const char *ip;
+            char *url;
 
-            /* Set the Apple-Challenge key */
-            pa_random(&rand, sizeof(rand));
-            pa_raop_base64_encode(&rand, 8*sizeof(rand), &sac);
-            rtrimchar(sac, '=');
-            pa_rtsp_add_header(c->rtsp, "Apple-Challenge", sac);
+            pa_log_debug("RAOP: CONNECTED");
 
-            pa_rtsp_options(c->rtsp);
+            ip = pa_rtsp_localip(c->rtsp);
+            url = pa_sprintf_malloc("rtsp://%s/%s", ip, c->sid);
+            pa_rtsp_set_url(c->rtsp, url);
 
-            pa_xfree(sac);
+            if (c->protocol == PA_RAOP_PROTOCOL_TCP)
+                frames = FRAMES_PER_TCP_PACKET;
+            else if (c->protocol == PA_RAOP_PROTOCOL_UDP)
+                frames = FRAMES_PER_UDP_PACKET;
+
+            switch(c->encryption) {
+                case PA_RAOP_ENCRYPTION_NONE: {
+                    sdp = pa_sprintf_malloc(
+                        "v=0\r\n"
+                        "o=iTunes %s 0 IN IP4 %s\r\n"
+                        "s=iTunes\r\n"
+                        "c=IN IP4 %s\r\n"
+                        "t=0 0\r\n"
+                        "m=audio 0 RTP/AVP 96\r\n"
+                        "a=rtpmap:96 AppleLossless\r\n"
+                        "a=fmtp:96 %d 0 16 40 10 14 2 255 0 0 44100\r\n",
+                        c->sid, ip, c->host, frames);
+
+                    break;
+                }
+
+                case PA_RAOP_ENCRYPTION_RSA:
+                case PA_RAOP_ENCRYPTION_FAIRPLAY:
+                case PA_RAOP_ENCRYPTION_MFISAP:
+                case PA_RAOP_ENCRYPTION_FAIRPLAY_SAP25: {
+                    key = pa_raop_secret_get_key(c->secret);
+                    iv = pa_raop_secret_get_iv(c->secret);
+
+                    sdp = pa_sprintf_malloc(
+                        "v=0\r\n"
+                        "o=iTunes %s 0 IN IP4 %s\r\n"
+                        "s=iTunes\r\n"
+                        "c=IN IP4 %s\r\n"
+                        "t=0 0\r\n"
+                        "m=audio 0 RTP/AVP 96\r\n"
+                        "a=rtpmap:96 AppleLossless\r\n"
+                        "a=fmtp:96 %d 0 16 40 10 14 2 255 0 0 44100\r\n"
+                        "a=rsaaeskey:%s\r\n"
+                        "a=aesiv:%s\r\n",
+                        c->sid, ip, c->host, frames, key, iv);
+
+                    pa_xfree(key);
+                    pa_xfree(iv);
+                    break;
+                }
+            }
+
+            pa_rtsp_announce(c->rtsp, sdp);
+
+            pa_xfree(sdp);
+            pa_xfree(url);
             break;
         }
 
         case STATE_OPTIONS: {
             pa_log_debug("RAOP: OPTIONS");
 
-            pa_rtsp_remove_header(c->rtsp, "Apple-Challenge");
-            do_rtsp_announce(c);
             break;
         }
 
         case STATE_ANNOUNCE: {
-            char *trs;
+            uint16_t cport = DEFAULT_UDP_CONTROL_PORT;
+            uint16_t tport = DEFAULT_UDP_TIMING_PORT;
+            char *trs = NULL;
 
-            pa_assert(c->udp_control_fd < 0);
-            pa_assert(c->udp_timing_fd < 0);
+            pa_log_debug("RAOP: ANNOUNCE");
 
-            c->udp_control_fd = open_bind_udp_socket(c, &c->udp_my_control_port);
-            if (c->udp_control_fd < 0)
-                goto error_announce;
-            c->udp_timing_fd  = open_bind_udp_socket(c, &c->udp_my_timing_port);
-            if (c->udp_timing_fd < 0)
-                goto error_announce;
+            if (c->protocol == PA_RAOP_PROTOCOL_TCP) {
+                trs = pa_sprintf_malloc(
+                    "RTP/AVP/TCP;unicast;interleaved=0-1;mode=record");
+            } else if (c->protocol == PA_RAOP_PROTOCOL_UDP) {
+                c->udp_cfd = open_bind_udp_socket(c, &cport);
+                c->udp_tfd  = open_bind_udp_socket(c, &tport);
+                if (c->udp_cfd < 0 || c->udp_tfd < 0)
+                    goto annonce_error;
 
-            trs = pa_sprintf_malloc("RTP/AVP/UDP;unicast;interleaved=0-1;mode=record;control_port=%d;timing_port=%d",
-                c->udp_my_control_port,
-                c->udp_my_timing_port);
+                trs = pa_sprintf_malloc(
+                    "RTP/AVP/UDP;unicast;interleaved=0-1;mode=record;"
+                    "control_port=%d;timing_port=%d",
+                    cport, tport);
+            }
 
             pa_rtsp_setup(c->rtsp, trs);
 
             pa_xfree(trs);
             break;
 
-        error_announce:
-            if (c->udp_control_fd > 0) {
-                pa_close(c->udp_control_fd);
-                c->udp_control_fd = -1;
-            }
-            if (c->udp_timing_fd > 0) {
-                pa_close(c->udp_timing_fd);
-                c->udp_timing_fd = -1;
-            }
+        annonce_error:
+            if (c->udp_cfd > 0)
+                pa_close(c->udp_cfd);
+            c->udp_cfd = -1;
+            if (c->udp_tfd > 0)
+                pa_close(c->udp_tfd);
+            c->udp_tfd = -1;
 
             pa_rtsp_client_free(c->rtsp);
+
+            pa_log_error("Aborting RTSP announce, failed creating required sockets");
+
             c->rtsp = NULL;
-
-            c->udp_my_control_port     = UDP_DEFAULT_CONTROL_PORT;
-            c->udp_server_control_port = UDP_DEFAULT_CONTROL_PORT;
-            c->udp_my_timing_port      = UDP_DEFAULT_TIMING_PORT;
-            c->udp_server_timing_port  = UDP_DEFAULT_TIMING_PORT;
-
-            pa_log_error("aborting RTSP announce, failed creating required sockets");
+            pa_xfree(trs);
+            break;
         }
 
         case STATE_SETUP: {
-            uint32_t stream_port = UDP_DEFAULT_AUDIO_PORT;
+            pa_socket_client *sc = NULL;
+            uint32_t sport = DEFAULT_UDP_AUDIO_PORT;
+            uint32_t cport =0, tport = 0;
             char *ajs, *trs, *token, *pc;
-            char delimiters[] = ";";
             const char *token_state = NULL;
-            uint32_t port = 0;
-            int ret;
+            char delimiters[] = ";";
 
             pa_log_debug("RAOP: SETUP");
 
@@ -791,117 +976,104 @@ static void udp_rtsp_cb(pa_rtsp_client *rtsp, pa_rtsp_state state, pa_rtsp_statu
                 }
 
             } else {
-                pa_log_warn("Audio-Jack-Status missing");
+                pa_log_warn("\"Audio-Jack-Status\" missing in RTSP setup response");
             }
+
+            sport = pa_rtsp_serverport(c->rtsp);
+            if (sport <= 0)
+                goto setup_error;
 
             token_state = NULL;
+            if (c->protocol == PA_RAOP_PROTOCOL_TCP) {
+                if (!(sc = pa_socket_client_new_string(c->core->mainloop, true, c->host, sport)))
+                    goto setup_error;
 
-            if (trs) {
-                /* Now parse out the server port component of the response. */
-                while ((token = pa_split(trs, delimiters, &token_state))) {
-                    if ((pc = strstr(token, "="))) {
+                pa_socket_client_ref(sc);
+                pa_socket_client_set_callback(sc, tcp_connection_cb, c);
+
+                pa_socket_client_unref(sc);
+                sc = NULL;
+            } else if (c->protocol == PA_RAOP_PROTOCOL_UDP) {
+                if (trs) {
+                    /* Now parse out the server port component of the response. */
+                    while ((token = pa_split(trs, delimiters, &token_state))) {
+                        if ((pc = strstr(token, "="))) {
                         *pc = 0;
-                        if (pa_streq(token, "control_port")) {
-                            port = 0;
-                            pa_atou(pc + 1, &port);
-                            c->udp_server_control_port = port;
+                         if (pa_streq(token, "control_port"))
+                                pa_atou(pc + 1, &cport);
+                            if (pa_streq(token, "timing_port"))
+                                pa_atou(pc + 1, &tport);
+                            *pc = '=';
                         }
-                        if (pa_streq(token, "timing_port")) {
-                            port = 0;
-                            pa_atou(pc + 1, &port);
-                            c->udp_server_timing_port = port;
-                        }
-                        *pc = '=';
+                        pa_xfree(token);
                     }
-                    pa_xfree(token);
+                } else {
+                    pa_log_warn("\"Transport\" missing in RTSP setup response");
                 }
-            } else {
-                pa_log_warn("Transport missing");
+
+                if (cport <= 0 || tport <= 0)
+                    goto setup_error;
+
+                if ((c->udp_sfd = connect_udp_socket(c, -1, sport)) <= 0)
+                    goto setup_error;
+                if ((c->udp_cfd = connect_udp_socket(c, c->udp_cfd, cport)) <= 0)
+                    goto setup_error;
+                if ((c->udp_tfd = connect_udp_socket(c, c->udp_tfd, tport)) <= 0)
+                    goto setup_error;
+
+                pa_log_debug("Connection established (UDP;control_port=%d;timing_port=%d)", cport, tport);
+
+                if (c->state_callback)
+                    c->state_callback(PA_RAOP_CONNECTED, c->state_userdata);
             }
 
-            pa_xfree(ajs);
-            pa_xfree(trs);
-
-            stream_port = pa_rtsp_serverport(c->rtsp);
-            if (stream_port == 0)
-                goto error;
-            if (c->udp_server_control_port == 0 || c->udp_server_timing_port == 0)
-                goto error;
-
-            pa_log_debug("Using server_port=%d, control_port=%d & timing_port=%d",
-                stream_port,
-                c->udp_server_control_port,
-                c->udp_server_timing_port);
-
-            pa_assert(c->udp_stream_fd < 0);
-            pa_assert(c->udp_control_fd >= 0);
-            pa_assert(c->udp_timing_fd >= 0);
-
-            c->udp_stream_fd = connect_udp_socket(c, -1, stream_port);
-            if (c->udp_stream_fd <= 0)
-                goto error;
-            ret = connect_udp_socket(c, c->udp_control_fd,
-                                     c->udp_server_control_port);
-            if (ret < 0)
-                goto error;
-            ret = connect_udp_socket(c, c->udp_timing_fd,
-                                     c->udp_server_timing_port);
-            if (ret < 0)
-                goto error;
-
-            c->udp_setup_callback(c->udp_control_fd, c->udp_timing_fd, c->udp_setup_userdata);
             pa_rtsp_record(c->rtsp, &c->seq, &c->rtptime);
 
+            pa_xfree(trs);
+            pa_xfree(ajs);
             break;
 
-        error:
-            if (c->udp_stream_fd > 0) {
-                pa_close(c->udp_stream_fd);
-                c->udp_stream_fd = -1;
-            }
-            if (c->udp_control_fd > 0) {
-                pa_close(c->udp_control_fd);
-                c->udp_control_fd = -1;
-            }
-            if (c->udp_timing_fd > 0) {
-                pa_close(c->udp_timing_fd);
-                c->udp_timing_fd = -1;
-            }
+        setup_error:
+            if (c->tcp_sfd > 0)
+                pa_close(c->tcp_sfd);
+            c->tcp_sfd = -1;
+
+            if (c->udp_sfd > 0)
+                pa_close(c->udp_sfd);
+            c->udp_sfd = -1;
+
+            c->udp_cfd = c->udp_tfd = -1;
 
             pa_rtsp_client_free(c->rtsp);
-            c->rtsp = NULL;
-
-            c->udp_my_control_port     = UDP_DEFAULT_CONTROL_PORT;
-            c->udp_server_control_port = UDP_DEFAULT_CONTROL_PORT;
-            c->udp_my_timing_port      = UDP_DEFAULT_TIMING_PORT;
-            c->udp_server_timing_port  = UDP_DEFAULT_TIMING_PORT;
 
             pa_log_error("aborting RTSP setup, failed creating required sockets");
 
+            if (c->state_callback)
+                c->state_callback(PA_RAOP_DISCONNECTED, c->state_userdata);
+
+            c->rtsp = NULL;
             break;
         }
 
         case STATE_RECORD: {
             int32_t latency = 0;
-            uint32_t rand;
+            uint32_t ssrc;
             char *alt;
 
             pa_log_debug("RAOP: RECORD");
 
             alt = pa_xstrdup(pa_headerlist_gets(headers, "Audio-Latency"));
-            /* Generate a random synchronization source identifier from this session. */
-            pa_random(&rand, sizeof(rand));
-            c->udp_ssrc = rand;
-
             if (alt)
                 pa_atoi(alt, &latency);
 
-            c->udp_first_packet = true;
-            c->udp_sync_count = 0;
-
+            pa_random(&ssrc, sizeof(ssrc));
+            c->is_first_packet = true;
             c->is_recording = true;
+            c->sync_count = 0;
+            c->ssrc = ssrc;
 
-            c->udp_record_callback(c->udp_setup_userdata);
+            if (c->state_callback)
+                c->state_callback((int) PA_RAOP_RECORDING, c->state_userdata);
 
             pa_xfree(alt);
             break;
@@ -923,77 +1095,71 @@ static void udp_rtsp_cb(pa_rtsp_client *rtsp, pa_rtsp_state state, pa_rtsp_statu
 
         case STATE_TEARDOWN: {
             pa_log_debug("RAOP: TEARDOWN");
-            pa_assert(c->udp_disconnected_callback);
-            pa_assert(c->rtsp);
 
             c->is_recording = false;
 
-            pa_rtsp_disconnect(c->rtsp);
+            if (c->pbuf)
+                pa_raop_pb_clear(c->pbuf);
 
-            if (c->udp_stream_fd > 0) {
-                pa_close(c->udp_stream_fd);
-                c->udp_stream_fd = -1;
-            }
+            if (c->tcp_sfd > 0)
+                pa_close(c->tcp_sfd);
+            c->tcp_sfd = -1;
 
-            pa_log_debug("RTSP control channel closed (teardown)");
+            if (c->udp_sfd > 0)
+                pa_close(c->udp_sfd);
+            c->udp_sfd = -1;
 
-            pa_raop_pb_clear(c->packet_buffer);
+            /* Polling sockets will be closed by sink */
+            c->udp_cfd = c->udp_tfd = -1;
+            c->tcp_sfd = -1;
 
             pa_rtsp_client_free(c->rtsp);
             pa_xfree(c->sid);
             c->rtsp = NULL;
             c->sid = NULL;
 
-            /*
-              Callback for cleanup -- e.g. pollfd
-
-              Share the disconnected callback since TEARDOWN event
-              is essentially equivalent to DISCONNECTED.
-              In case some special treatment turns out to be required
-              for TEARDOWN in future, a new callback function may be
-              defined and used.
-            */
-            c->udp_disconnected_callback(c->udp_disconnected_userdata);
-
-            /* Control and timing fds are closed by udp_sink_process_msg,
-               after it disables poll */
-            c->udp_control_fd = -1;
-            c->udp_timing_fd = -1;
+            if (c->state_callback)
+                c->state_callback(PA_RAOP_DISCONNECTED, c->state_userdata);
 
             break;
         }
 
         case STATE_DISCONNECTED: {
             pa_log_debug("RAOP: DISCONNECTED");
-            pa_assert(c->udp_disconnected_callback);
-            pa_assert(c->rtsp);
 
-            if (c->udp_stream_fd > 0) {
-                pa_close(c->udp_stream_fd);
-                c->udp_stream_fd = -1;
-            }
+            c->is_recording = false;
 
-            pa_log_debug("RTSP control channel closed (disconnected)");
+            if (c->pbuf)
+                pa_raop_pb_clear(c->pbuf);
 
-            pa_raop_pb_clear(c->packet_buffer);
+            if (c->tcp_sfd > 0)
+                pa_close(c->tcp_sfd);
+            c->tcp_sfd = -1;
+
+            if (c->udp_sfd > 0)
+                pa_close(c->udp_sfd);
+            c->udp_sfd = -1;
+
+            /* Polling sockets will be closed by sink */
+            c->udp_cfd = c->udp_tfd = -1;
+            c->tcp_sfd = -1;
+
+            pa_log_error("RTSP control channel closed (disconnected)");
 
             pa_rtsp_client_free(c->rtsp);
             pa_xfree(c->sid);
             c->rtsp = NULL;
             c->sid = NULL;
 
-            c->udp_disconnected_callback(c->udp_disconnected_userdata);
-            /* Control and timing fds are closed by udp_sink_process_msg,
-               after it disables poll */
-            c->udp_control_fd = -1;
-            c->udp_timing_fd = -1;
+            if (c->state_callback)
+                c->state_callback((int) PA_RAOP_DISCONNECTED, c->state_userdata);
 
             break;
         }
     }
 }
 
-static void rtsp_authentication_cb(pa_rtsp_client *rtsp, pa_rtsp_state state, pa_rtsp_status status, pa_headerlist *headers, void *userdata) {
+static void rtsp_auth_cb(pa_rtsp_client *rtsp, pa_rtsp_state_t state, pa_rtsp_status_t status, pa_headerlist *headers, void *userdata) {
     pa_raop_client *c = userdata;
 
     pa_assert(c);
@@ -1016,9 +1182,8 @@ static void rtsp_authentication_cb(pa_rtsp_client *rtsp, pa_rtsp_state state, pa
 
             pa_random(&rac, sizeof(rac));
             /* Generate a random Apple-Challenge key */
-            pa_raop_base64_encode(&rac, 8*sizeof(rac), &sac);
-            pa_log_debug ("APPLECHALLENGE >> %s | %d", sac, (int) sizeof(rac));
-            rtrimchar(sac, '=');
+            pa_raop_base64_encode(&rac, 8 * sizeof(rac), &sac);
+            rtrim_char(sac, '=');
             pa_rtsp_add_header(c->rtsp, "Apple-Challenge", sac);
 
             pa_rtsp_options(c->rtsp);
@@ -1045,7 +1210,7 @@ static void rtsp_authentication_cb(pa_rtsp_client *rtsp, pa_rtsp_state state, pa
                 wath = pa_xstrdup(pa_headerlist_gets(headers, "WWW-Authenticate"));
                 if (true == waiting) {
                     pa_xfree(wath);
-                    goto failure;
+                    goto fail;
                 }
 
                 if (wath)
@@ -1064,21 +1229,21 @@ static void rtsp_authentication_cb(pa_rtsp_client *rtsp, pa_rtsp_state state, pa
                 }
 
                 if (pa_safe_streq(mth, "Basic")) {
-                    rtrimchar(realm, '\"');
+                    rtrim_char(realm, '\"');
 
-                    pa_raop_basic_response(USER_NAME, c->pwd, &response);
+                    pa_raop_basic_response(DEFAULT_USER_NAME, c->password, &response);
                     ath = pa_sprintf_malloc("Basic %s",
                         response);
 
                     pa_xfree(response);
                     pa_xfree(realm);
                 } else if (pa_safe_streq(mth, "Digest")) {
-                    rtrimchar(realm, '\"');
-                    rtrimchar(nonce, '\"');
+                    rtrim_char(realm, '\"');
+                    rtrim_char(nonce, '\"');
 
-                    pa_raop_digest_response(USER_NAME, realm, c->pwd, nonce, "*", &response);
+                    pa_raop_digest_response(DEFAULT_USER_NAME, realm, c->password, nonce, "*", &response);
                     ath = pa_sprintf_malloc("Digest username=\"%s\", realm=\"%s\", nonce=\"%s\", uri=\"*\", response=\"%s\"",
-                        USER_NAME, realm, nonce,
+                        DEFAULT_USER_NAME, realm, nonce,
                         response);
 
                     pa_xfree(response);
@@ -1106,38 +1271,38 @@ static void rtsp_authentication_cb(pa_rtsp_client *rtsp, pa_rtsp_state state, pa
                 publ = pa_xstrdup(pa_headerlist_gets(headers, "Public"));
                 c->sci = pa_xstrdup(pa_rtsp_get_header(c->rtsp, "Client-Instance"));
 
-                if (c->pwd)
-                    pa_xfree(c->pwd);
+                if (c->password)
+                    pa_xfree(c->password);
                 pa_xfree(publ);
-                c->pwd = NULL;
+                c->password = NULL;
             }
 
-            if (c->udp_auth_callback)
-                c->udp_auth_callback((int) status, c->udp_auth_userdata);
+            if (c->state_callback)
+                c->state_callback((int) PA_RAOP_AUTHENTICATED, c->state_userdata);
             pa_rtsp_client_free(c->rtsp);
             c->rtsp = NULL;
 
             waiting = false;
             break;
 
-        failure:
-            if (c->udp_auth_callback)
-                c->udp_auth_callback((int) STATUS_UNAUTHORIZED, c->udp_auth_userdata);
+        fail:
+            if (c->state_callback)
+                c->state_callback((int) PA_RAOP_DISCONNECTED, c->state_userdata);
             pa_rtsp_client_free(c->rtsp);
             c->rtsp = NULL;
 
-            pa_log_error("aborting RTSP authentication, wrong password");
+            pa_log_error("aborting authentication, wrong password");
 
             waiting = false;
             break;
 
         error:
-            if (c->udp_auth_callback)
-                c->udp_auth_callback((int) status, c->udp_auth_userdata);
+            if (c->state_callback)
+                c->state_callback((int) PA_RAOP_DISCONNECTED, c->state_userdata);
             pa_rtsp_client_free(c->rtsp);
             c->rtsp = NULL;
 
-            pa_log_error("aborting RTSP authentication, unexpected failure");
+            pa_log_error("aborting authentication, unexpected failure");
 
             waiting = false;
             break;
@@ -1151,8 +1316,8 @@ static void rtsp_authentication_cb(pa_rtsp_client *rtsp, pa_rtsp_state state, pa
         case STATE_TEARDOWN:
         case STATE_DISCONNECTED:
         default: {
-            if (c->udp_auth_callback)
-                c->udp_auth_callback((int) STATUS_BAD_REQUEST, c->udp_auth_userdata);
+            if (c->state_callback)
+                c->state_callback((int) PA_RAOP_DISCONNECTED, c->state_userdata);
             pa_rtsp_client_free(c->rtsp);
             c->rtsp = NULL;
 
@@ -1165,8 +1330,10 @@ static void rtsp_authentication_cb(pa_rtsp_client *rtsp, pa_rtsp_state state, pa
     }
 }
 
-pa_raop_client* pa_raop_client_new(pa_core *core, const char *host, pa_raop_protocol_t protocol) {
+pa_raop_client* pa_raop_client_new(pa_core *core, const char *host, pa_raop_protocol_t protocol,
+                                   pa_raop_encryption_t encryption, pa_raop_codec_t codec) {
     pa_raop_client *c;
+
     pa_parsed_address a;
     pa_sample_spec ss;
 
@@ -1183,41 +1350,38 @@ pa_raop_client* pa_raop_client_new(pa_core *core, const char *host, pa_raop_prot
 
     c = pa_xnew0(pa_raop_client, 1);
     c->core = core;
-    c->tcp_fd = -1;
-    c->protocol = protocol;
-    c->udp_stream_fd = -1;
-    c->udp_control_fd = -1;
-    c->udp_timing_fd = -1;
-
-    c->encryption = 0;
-    c->aes = NULL;
-
-    c->udp_my_control_port     = UDP_DEFAULT_CONTROL_PORT;
-    c->udp_server_control_port = UDP_DEFAULT_CONTROL_PORT;
-    c->udp_my_timing_port      = UDP_DEFAULT_TIMING_PORT;
-    c->udp_server_timing_port  = UDP_DEFAULT_TIMING_PORT;
-
-    c->host = a.path_or_host;
-    if (a.port)
+    c->host = pa_xstrdup(a.path_or_host);
+    if (a.port > 0)
         c->port = a.port;
     else
         c->port = DEFAULT_RAOP_PORT;
+    c->rtsp = NULL;
+    c->sci = c->sid = NULL;
+    c->password = NULL;
 
-    c->is_recording = false;
-    c->udp_first_packet = true;
+    c->protocol = protocol;
+    c->encryption = encryption;
+    c->codec = codec;
+
+    c->tcp_sfd = -1;
+
+    c->udp_sfd = -1;
+    c->udp_cfd = -1;
+    c->udp_tfd = -1;
+
+    c->secret = NULL;
+    if (c->encryption != PA_RAOP_ENCRYPTION_NONE)
+        c->secret = pa_raop_secret_new();
 
     ss = core->default_sample_spec;
-    /* Packet sync interval should be around 1s. */
-    c->udp_sync_interval = ss.rate / UDP_FRAMES_PER_PACKET;
-    c->udp_sync_count = 0;
 
-    if (c->protocol == RAOP_TCP) {
-        if (pa_raop_client_connect(c)) {
-            pa_raop_client_free(c);
-            return NULL;
-        }
-    } else
-        c->packet_buffer = pa_raop_pb_new(UDP_DEFAULT_PKT_BUF_SIZE);
+    c->is_recording = false;
+    c->is_first_packet = true;
+    /* Packet sync interval should be around 1s (UDP only) */
+    c->sync_interval = ss.rate / FRAMES_PER_UDP_PACKET;
+    c->sync_count = 0;
+
+    c->pbuf = pa_raop_pb_new(UDP_DEFAULT_PKT_BUF_SIZE);
 
     return c;
 }
@@ -1225,16 +1389,17 @@ pa_raop_client* pa_raop_client_new(pa_core *core, const char *host, pa_raop_prot
 void pa_raop_client_free(pa_raop_client *c) {
     pa_assert(c);
 
-    pa_raop_pb_delete(c->packet_buffer);
+    pa_raop_pb_delete(c->pbuf);
 
-    if (c->sid)
-        pa_xfree(c->sid);
-    if (c->sci)
-        pa_xfree(c->sci);
+    pa_xfree(c->sid);
+    pa_xfree(c->sci);
+    if (c->secret)
+        pa_raop_secret_free(c->secret);
+    pa_xfree(c->password);
     c->sci = c->sid = NULL;
+    c->password = NULL;
+    c->secret = NULL;
 
-    if (c->aes)
-        pa_raop_secret_free(c->aes);
     if (c->rtsp)
         pa_rtsp_client_free(c->rtsp);
     c->rtsp = NULL;
@@ -1244,332 +1409,156 @@ void pa_raop_client_free(pa_raop_client *c) {
 }
 
 int pa_raop_client_authenticate (pa_raop_client *c, const char *password) {
+    int rv = 0;
 
     pa_assert(c);
 
-    if (c->rtsp || c->pwd) {
-        pa_log_debug("Connection already in progress");
+    if (c->rtsp || c->password) {
+        pa_log_debug("Authentication/Connection already in progress...");
         return 0;
     }
 
-    c->pwd = NULL;
+    c->password = NULL;
     if (password)
-        c->pwd = pa_xstrdup(password);
-    c->rtsp = pa_rtsp_client_new(c->core->mainloop, c->host, c->port, USER_AGENT);
+        c->password = pa_xstrdup(password);
+    c->rtsp = pa_rtsp_client_new(c->core->mainloop, c->host, c->port, DEFAULT_USER_AGENT);
 
     pa_assert(c->rtsp);
 
-    pa_rtsp_set_callback(c->rtsp, rtsp_authentication_cb, c);
-    return pa_rtsp_connect(c->rtsp);
+    pa_rtsp_set_callback(c->rtsp, rtsp_auth_cb, c);
+    rv = pa_rtsp_connect(c->rtsp);
+    return rv;
 }
 
-int pa_raop_client_connect(pa_raop_client *c) {
-    char *sci;
-    struct {
-        uint32_t a;
-        uint32_t b;
-        uint32_t c;
-    } rand_data;
+bool pa_raop_client_is_authenticated(pa_raop_client *c) {
+    pa_assert(c);
+
+    return (c->sci != NULL);
+}
+
+int pa_raop_client_announce(pa_raop_client *c) {
+    uint32_t sid;
+    int rv = 0;
 
     pa_assert(c);
 
     if (c->rtsp) {
-        pa_log_debug("Connection already in progress");
+        pa_log_debug("Connection already in progress...");
+        return 0;
+    } else if (!c->sci) {
+        pa_log_debug("ANNOUNCE requires a preliminary authentication");
+        return 1;
+    }
+
+    c->rtsp = pa_rtsp_client_new(c->core->mainloop, c->host, c->port, DEFAULT_USER_AGENT);
+
+    pa_assert(c->rtsp);
+
+    c->sync_count = 0;
+    c->is_recording = false;
+    c->is_first_packet = true;
+    pa_random(&sid, sizeof(sid));
+    c->sid = pa_sprintf_malloc("%u", sid);
+    pa_rtsp_set_callback(c->rtsp, rtsp_stream_cb, c);
+
+    rv = pa_rtsp_connect(c->rtsp);
+    return rv;
+}
+
+bool pa_raop_client_is_alive(pa_raop_client *c) {
+    pa_assert(c);
+
+    if (!c->rtsp || !c->sci) {
+        pa_log_debug("Not alive, connection not established yet...");
+        return false;
+    }
+
+    switch (c->protocol) {
+        case PA_RAOP_PROTOCOL_TCP:
+            if (c->tcp_sfd > 0)
+                return true;
+            break;
+        case PA_RAOP_PROTOCOL_UDP:
+            if (c->udp_sfd > 0)
+                return true;
+            break;
+        default:
+            break;
+    }
+
+    return false;
+}
+
+bool pa_raop_client_can_stream(pa_raop_client *c) {
+    pa_assert(c);
+
+    if (!c->rtsp || !c->sci) {
+        pa_log_debug("Can't stream, connection not established yet...");
+        return false;
+    }
+
+    switch (c->protocol) {
+        case PA_RAOP_PROTOCOL_TCP:
+            if (c->tcp_sfd > 0 && c->is_recording)
+                return true;
+            break;
+        case PA_RAOP_PROTOCOL_UDP:
+            if (c->udp_sfd > 0 && c->is_recording)
+                return true;
+            break;
+        default:
+            break;
+    }
+
+    return false;
+}
+
+int pa_raop_client_stream(pa_raop_client *c) {
+    int rv = 0;
+
+    pa_assert(c);
+
+    if (!c->rtsp || !c->sci) {
+        pa_log_debug("Streaming's impossible, connection not established yet...");
         return 0;
     }
 
-    if (c->protocol == RAOP_TCP)
-        c->rtsp = pa_rtsp_client_new(c->core->mainloop, c->host, c->port, "iTunes/4.6 (Macintosh; U; PPC Mac OS X 10.3)");
-    else
-        c->rtsp = pa_rtsp_client_new(c->core->mainloop, c->host, c->port, USER_AGENT);
-
-    /* Generate random instance id. */
-    pa_random(&rand_data, sizeof(rand_data));
-    c->sid = pa_sprintf_malloc("%u", rand_data.a);
-    sci = pa_sprintf_malloc("%08x%08x",rand_data.b, rand_data.c);
-    pa_rtsp_add_header(c->rtsp, "Client-Instance", sci);
-    pa_xfree(sci);
-    if (c->protocol == RAOP_TCP)
-        pa_rtsp_set_callback(c->rtsp, tcp_rtsp_cb, c);
-    else
-        pa_rtsp_set_callback(c->rtsp, udp_rtsp_cb, c);
-
-    c->is_recording = false;
-
-    return pa_rtsp_connect(c->rtsp);
-}
-
-int pa_raop_client_flush(pa_raop_client *c) {
-    int rv = 0;
-
-    pa_assert(c);
-
-    if (c->rtsp != NULL) {
-        rv = pa_rtsp_flush(c->rtsp, c->seq, c->rtptime);
-        c->udp_sync_count = 0;
-    }
-
-    return rv;
-}
-
-int pa_raop_client_teardown(pa_raop_client *c) {
-    int rv = 0;
-
-    pa_assert(c);
-
-    if (c->rtsp != NULL)
-        rv = pa_rtsp_teardown(c->rtsp);
-
-    return rv;
-}
-
-int pa_raop_client_udp_is_authenticated(pa_raop_client *c) {
-    int rv = 0;
-
-    pa_assert(c);
-
-    if (c->sci != NULL)
-        rv = 1;
-
-    return rv;
-}
-
-int pa_raop_client_udp_is_alive(pa_raop_client *c) {
-    int rv = 0;
-
-    pa_assert(c);
-
-    if (c->udp_stream_fd > 0)
-        rv = 1;
-
-    return rv;
-}
-
-int pa_raop_client_udp_can_stream(pa_raop_client *c) {
-    int rv = 0;
-
-    pa_assert(c);
-
-    if (c->is_recording && c->udp_stream_fd > 0)
-        rv = 1;
-
-    return rv;
-}
-
-int pa_raop_client_udp_stream(pa_raop_client *c) {
-    int rv = 0;
-
-    pa_assert(c);
-
-    if (c->rtsp != NULL && c->udp_stream_fd > 0) {
-        if (!c->is_recording) {
-            c->udp_first_packet = true;
-            c->udp_sync_count = 0;
-            c->is_recording = true;
-         }
-
-        rv = 1;
-    }
-
-    return rv;
-}
-
-int pa_raop_client_udp_handle_timing_packet(pa_raop_client *c, const uint8_t packet[], ssize_t size) {
-    const uint32_t * data = NULL;
-    uint8_t payload = 0;
-    struct timeval tv;
-    uint64_t rci = 0;
-    int rv = 0;
-
-    pa_assert(c);
-    pa_assert(packet);
-
-    /* Timing packets are 32 bytes long: 1 x 8 RTP header (no ssrc) + 3 x 8 NTP timestamps. */
-    if (size != 32 || packet[0] != 0x80)
-    {
-        pa_log_debug("Received an invalid timing packet.");
-        return 1;
-    }
-
-    data = (uint32_t *) (packet + sizeof(udp_timming_header));
-    rci = timeval_to_ntp(pa_rtclock_get(&tv));
-    /* The market bit is always set (see rfc3550 for packet structure) ! */
-    payload = packet[1] ^ 0x80;
-    switch (payload) {
-        case UDP_PAYLOAD_TIMING_REQUEST:
-            rv = udp_send_timing_packet(c, data, rci);
+    switch (c->protocol) {
+        case PA_RAOP_PROTOCOL_TCP:
+            if (c->tcp_sfd > 0 && !c->is_recording)
+                c->is_recording = true;
+                c->is_first_packet = true;
+                c->sync_count = 0;
             break;
-        case UDP_PAYLOAD_TIMING_RESPONSE:
+        case PA_RAOP_PROTOCOL_UDP:
+            if (c->udp_sfd > 0 && !c->is_recording) {
+                c->is_recording = true;
+                c->is_first_packet = true;
+                c->sync_count = 0;
+            }
+            break;
         default:
-            pa_log_debug("Got an unexpected payload type on timing channel !");
-            return 1;
-    }
-
-    return rv;
-}
-
-static int udp_resend_packets(pa_raop_client *c, uint16_t seq_num, uint16_t num_packets) {
-    int rv = -1;
-    uint8_t *data = NULL;
-    ssize_t len = 0;
-    int i = 0;
-
-    pa_assert(c);
-    pa_assert(num_packets > 0);
-    pa_assert(c->packet_buffer);
-
-    for (i = seq_num; i < seq_num + num_packets; i++) {
-        len = pa_raop_pb_read_packet(c->packet_buffer, i, (uint8_t **) &data);
-
-        if (len > 0) {
-            ssize_t r;
-
-            /* Obtained buffer has a header room for retransmission
-               header */
-            udp_build_retrans_header((uint32_t *) data, len, seq_num);
-            r = udp_send_audio_packet(c, true /* retrans */, data, len);
-            if (r == len)
-                rv = 0;
-            else
-                rv = -1;
-        } else
-            pa_log_debug("Packet not found in retrans buffer: %u", i);
-    }
-
-    return rv;
-}
-
-int pa_raop_client_udp_handle_control_packet(pa_raop_client *c, const uint8_t packet[], ssize_t size) {
-    uint8_t payload = 0;
-    int rv = 0;
-
-    uint16_t seq_num;
-    uint16_t num_packets;
-
-    pa_assert(c);
-    pa_assert(packet);
-
-    if ((size != 20 && size != 8) || packet[0] != 0x80)
-    {
-        pa_log_debug("Received an invalid control packet.");
-        return 1;
-    }
-
-    /* The market bit is always set (see rfc3550 for packet structure) ! */
-
-    payload = packet[1] ^ 0x80;
-    switch (payload) {
-        case UDP_PAYLOAD_RETRANSMIT_REQUEST:
-            pa_assert(size == 8);
-
-            /* Requested start sequence number */
-            seq_num = ((uint16_t) packet[4]) << 8;
-            seq_num |= (uint16_t) packet[5];
-            /* Number of requested packets starting at requested seq. number */
-            num_packets = (uint16_t) packet[6] << 8;
-            num_packets |= (uint16_t) packet[7];
-            pa_log_debug("Resending %d packets starting at %d", num_packets, seq_num);
-            rv = udp_resend_packets(c, seq_num, num_packets);
+            rv = 1;
             break;
-
-        case UDP_PAYLOAD_RETRANSMIT_REPLY:
-            pa_log_debug("Received a retransmit reply packet on control port (this should never happen)");
-            break;
-
-        default:
-            pa_log_debug("Got an unexpected payload type on control channel: %u !", payload);
-            return 1;
     }
 
     return rv;
-}
-
-int pa_raop_client_udp_get_blocks_size(pa_raop_client *c, size_t *size) {
-    int rv = 0;
-
-    pa_assert(c);
-    pa_assert(size);
-
-    *size = UDP_FRAMES_PER_PACKET;
-
-    return rv;
-}
-
-ssize_t pa_raop_client_udp_send_audio_packet(pa_raop_client *c, pa_memchunk *block) {
-    uint8_t *buf = NULL;
-    ssize_t len;
-
-    pa_assert(c);
-    pa_assert(block);
-
-    /* Sync RTP & NTP timestamp if required. */
-    if (c->udp_first_packet || c->udp_sync_count >= c->udp_sync_interval) {
-        udp_send_sync_packet(c, c->rtptime);
-        c->udp_sync_count = 0;
-    } else {
-        c->udp_sync_count++;
-    }
-
-    buf = pa_memblock_acquire(block->memblock);
-    pa_assert(buf);
-    pa_assert(block->length > 0);
-    udp_build_audio_header(c, (uint32_t *) (buf + block->index), block->length);
-    len = udp_send_audio_packet(c, false, buf + block->index, block->length);
-
-    /* Store packet for resending in the packet buffer */
-    pa_raop_pb_write_packet(c->packet_buffer, c->seq, buf + block->index,
-                            block->length);
-
-    c->seq++;
-
-    pa_memblock_release(block->memblock);
-
-    if (len > 0) {
-        pa_assert((size_t) len <= block->length);
-        /* UDP packet has to be sent at once, so it is meaningless to
-           preseve the partial data
-           FIXME: This won't happen at least in *NIX systems?? */
-        if (block->length > (size_t) len) {
-            pa_log_warn("Tried to send %zu bytes but managed to send %zu bytes", block->length, len);
-            len = block->length;
-        }
-        block->index += block->length;
-        block->length = 0;
-    }
-
-    if (c->udp_first_packet)
-        c->udp_first_packet = false;
-
-    return len;
-}
-
-void pa_raop_client_set_encryption(pa_raop_client *c, int encryption) {
-    pa_assert(c);
-
-    c->encryption = encryption;
-    if (c->encryption)
-        c->aes = pa_raop_secret_new();
-}
-
-/* Adjust volume so that it fits into VOLUME_DEF <= v <= 0 dB */
-pa_volume_t pa_raop_client_adjust_volume(pa_raop_client *c, pa_volume_t volume) {
-    double minv, maxv;
-
-    if (c->protocol != RAOP_UDP)
-        return volume;
-
-    maxv = pa_sw_volume_from_dB(0.0);
-    minv = maxv * pow(10.0, (double) VOLUME_DEF / 60.0);
-
-    return volume - volume * (minv / maxv) + minv;
 }
 
 int pa_raop_client_set_volume(pa_raop_client *c, pa_volume_t volume) {
+    char *param;
     int rv = 0;
     double db;
-    char *param;
 
     pa_assert(c);
+
+    if (!c->rtsp) {
+        pa_log_debug("Cannot SET_PARAMETER, connection not established yet...");
+        return 0;
+    } else if (!c->sci) {
+        pa_log_debug("SET_PARAMETER requires a preliminary authentication");
+        return 1;
+    }
 
     db = pa_sw_volume_to_dB(volume);
     if (db < VOLUME_MIN)
@@ -1579,145 +1568,171 @@ int pa_raop_client_set_volume(pa_raop_client *c, pa_volume_t volume) {
 
     pa_log_debug("volume=%u db=%.6f", volume, db);
 
-    param = pa_sprintf_malloc("volume: %0.6f\r\n",  db);
-
+    param = pa_sprintf_malloc("volume: %0.6f\r\n", db);
     /* We just hit and hope, cannot wait for the callback. */
     if (c->rtsp != NULL && pa_rtsp_exec_ready(c->rtsp))
         rv = pa_rtsp_setparameter(c->rtsp, param);
-    pa_xfree(param);
 
+    pa_xfree(param);
     return rv;
 }
 
-int pa_raop_client_encode_sample(pa_raop_client *c, pa_memchunk *raw, pa_memchunk *encoded) {
-    uint16_t len;
-    size_t bufmax;
-    uint8_t *bp, bpos;
-    uint8_t *ibp, *maxibp;
-    int size;
-    uint8_t *b, *p;
-    uint32_t bsize;
-    size_t length;
-    const uint8_t *header;
-    int header_size;
+int pa_raop_client_flush(pa_raop_client *c) {
+    int rv = 0;
 
     pa_assert(c);
-    pa_assert(raw);
-    pa_assert(raw->memblock);
-    pa_assert(raw->length > 0);
-    pa_assert(encoded);
 
-    if (c->protocol == RAOP_TCP) {
-        header = tcp_audio_header;
-        header_size = sizeof(tcp_audio_header);
-    } else {
-        header = udp_audio_header;
-        header_size = sizeof(udp_audio_header);
+    if (!c->rtsp) {
+        pa_log_debug("Cannot FLUSH, connection not established yet...)");
+        return 0;
+    } else if (!c->sci) {
+        pa_log_debug("FLUSH requires a preliminary authentication");
+        return 1;
     }
 
-    /* We have to send 4 byte chunks */
-    bsize = (int)(raw->length / 4);
-    length = bsize * 4;
+    rv = pa_rtsp_flush(c->rtsp, c->seq, c->rtptime);
+    return rv;
+}
 
-    /* Leave 16 bytes extra to allow for the ALAC header which is about 55 bits. */
-    bufmax = length + header_size + 16;
-    pa_memchunk_reset(encoded);
-    encoded->memblock = pa_memblock_new(c->core->mempool, bufmax);
-    b = pa_memblock_acquire(encoded->memblock);
-    memcpy(b, header, header_size);
+int pa_raop_client_teardown(pa_raop_client *c) {
+    int rv = 0;
 
-    /* Now write the actual samples. */
-    bp = b + header_size;
-    size = bpos = 0;
-    bit_writer(&bp,&bpos,&size,1,3); /* channel=1, stereo */
-    bit_writer(&bp,&bpos,&size,0,4); /* Unknown */
-    bit_writer(&bp,&bpos,&size,0,8); /* Unknown */
-    bit_writer(&bp,&bpos,&size,0,4); /* Unknown */
-    bit_writer(&bp,&bpos,&size,1,1); /* Hassize */
-    bit_writer(&bp,&bpos,&size,0,2); /* Unused */
-    bit_writer(&bp,&bpos,&size,1,1); /* Is-not-compressed */
+    pa_assert(c);
 
-    /* Size of data, integer, big endian. */
-    bit_writer(&bp,&bpos,&size,(bsize>>24)&0xff,8);
-    bit_writer(&bp,&bpos,&size,(bsize>>16)&0xff,8);
-    bit_writer(&bp,&bpos,&size,(bsize>>8)&0xff,8);
-    bit_writer(&bp,&bpos,&size,(bsize)&0xff,8);
-
-    p = pa_memblock_acquire(raw->memblock);
-    p += raw->index;
-    ibp = p;
-    maxibp = p + raw->length - 4;
-    while (ibp <= maxibp) {
-        /* Byte swap stereo data. */
-        bit_writer(&bp,&bpos,&size,*(ibp+1),8);
-        bit_writer(&bp,&bpos,&size,*(ibp+0),8);
-        bit_writer(&bp,&bpos,&size,*(ibp+3),8);
-        bit_writer(&bp,&bpos,&size,*(ibp+2),8);
-        ibp += 4;
-        raw->index += 4;
-        raw->length -= 4;
-    }
-    if (c->protocol == RAOP_UDP)
-        c->rtptime += (ibp - p) / 4;
-    pa_memblock_release(raw->memblock);
-    encoded->length = header_size + size;
-
-    if (c->protocol == RAOP_TCP) {
-        /* Store the length (endian swapped: make this better). */
-        len = size + header_size - 4;
-        *(b + 2) = len >> 8;
-        *(b + 3) = len & 0xff;
+    if (!c->rtsp) {
+        pa_log_debug("Cannot TEARDOWN, connection not established yet...");
+        return 0;
+    } else if (!c->sci) {
+        pa_log_debug("TEARDOWN requires a preliminary authentication");
+        return 1;
     }
 
-    if (c->encryption) {
-        /* Encrypt our data. */
-        pa_raop_aes_encrypt(c->aes, (b + header_size), size);
+    rv = pa_rtsp_teardown(c->rtsp);
+    return rv;
+}
+
+void pa_raop_client_get_frames_per_block(pa_raop_client *c, size_t *frames) {
+    pa_assert(c);
+    pa_assert(frames);
+
+    switch (c->protocol) {
+        case PA_RAOP_PROTOCOL_TCP:
+            *frames = FRAMES_PER_TCP_PACKET;
+            break;
+        case PA_RAOP_PROTOCOL_UDP:
+            *frames = FRAMES_PER_UDP_PACKET;
+            break;
+        default:
+            *frames = 0;
+            break;
+    }
+}
+
+bool pa_raop_client_register_pollfd(pa_raop_client *c, pa_rtpoll *poll, pa_rtpoll_item **poll_item) {
+    struct pollfd *pollfd = NULL;
+    pa_rtpoll_item *item = NULL;
+    bool oob = true;
+
+    pa_assert(c);
+    pa_assert(poll);
+    pa_assert(poll_item);
+
+    switch (c->protocol) {
+        case PA_RAOP_PROTOCOL_TCP:
+            item = pa_rtpoll_item_new(poll, PA_RTPOLL_NEVER, 1);
+            pollfd = pa_rtpoll_item_get_pollfd(item, NULL);
+            pollfd->fd = c->tcp_sfd;
+            pollfd->events = POLLOUT;
+            pollfd->revents = 0;
+            *poll_item = item;
+            oob = false;
+            break;
+        case PA_RAOP_PROTOCOL_UDP:
+            item = pa_rtpoll_item_new(poll, PA_RTPOLL_NEVER, 2);
+            pollfd = pa_rtpoll_item_get_pollfd(item, NULL);
+            pollfd->fd = c->udp_cfd;
+            pollfd->events = POLLIN | POLLPRI;
+            pollfd->revents = 0;
+            pollfd++;
+            pollfd->fd = c->udp_tfd;
+            pollfd->events = POLLIN | POLLPRI;
+            pollfd->revents = 0;
+            *poll_item = item;
+            oob = true;
+            break;
+        default:
+            *poll_item = NULL;
+            break;
     }
 
-    /* We're done with the chunk. */
-    pa_memblock_release(encoded->memblock);
-
-    return 0;
+    return oob;
 }
 
-void pa_raop_client_tcp_set_callback(pa_raop_client *c, pa_raop_client_cb_t callback, void *userdata) {
+pa_volume_t pa_raop_client_adjust_volume(pa_raop_client *c, pa_volume_t volume) {
+    double minv, maxv;
+
     pa_assert(c);
 
-    c->tcp_callback = callback;
-    c->tcp_userdata = userdata;
+    if (c->protocol != PA_RAOP_PROTOCOL_UDP)
+        return volume;
+
+    maxv = pa_sw_volume_from_dB(0.0);
+    minv = maxv * pow(10.0, VOLUME_DEF / 60.0);
+
+    /* Adjust volume so that it fits into VOLUME_DEF <= v <= 0 dB */
+    return volume - volume * (minv / maxv) + minv;
 }
 
-void pa_raop_client_tcp_set_closed_callback(pa_raop_client *c, pa_raop_client_closed_cb_t callback, void *userdata) {
+void pa_raop_client_handle_oob_packet(pa_raop_client *c, const int fd, const uint8_t packet[], ssize_t size) {
     pa_assert(c);
+    pa_assert(fd > 0);
+    pa_assert(packet);
 
-    c->tcp_closed_callback = callback;
-    c->tcp_closed_userdata = userdata;
+    if (c->protocol == PA_RAOP_PROTOCOL_UDP) {
+        if (fd == c->udp_cfd) {
+            pa_log_debug("Received UDP control packet");
+            handle_udp_control_packet(c, packet, size);
+        } else if (fd == c->udp_tfd) {
+            pa_log_debug("Received UDP timing packet");
+            handle_udp_timing_packet(c, packet, size);
+        }
+    }
 }
 
-void pa_raop_client_udp_set_auth_callback(pa_raop_client *c, pa_raop_client_auth_cb_t callback, void *userdata) {
-    pa_assert(c);
+ssize_t pa_raop_client_send_audio_packet(pa_raop_client *c, pa_memchunk *block, size_t offset) {
+    ssize_t written = 0;
 
-    c->udp_auth_callback = callback;
-    c->udp_auth_userdata = userdata;
+    pa_assert(c);
+    pa_assert(block);
+
+    /* Sync RTP & NTP timestamp if required (UDP). */
+    if (c->protocol == PA_RAOP_PROTOCOL_UDP) {
+        c->sync_count++;
+        if (c->is_first_packet || c->sync_count >= c->sync_interval) {
+            send_udp_sync_packet(c, c->rtptime);
+            c->sync_count = 0;
+        }
+    }
+
+    switch (c->protocol) {
+        case PA_RAOP_PROTOCOL_TCP:
+            written = send_tcp_audio_packet(c, block, offset);
+            break;
+        case PA_RAOP_PROTOCOL_UDP:
+            written = send_udp_audio_packet(c, block, offset);
+            break;
+        default:
+            written = -1;
+            break;
+    }
+
+    c->is_first_packet = false;
+    return written;
 }
 
-void pa_raop_client_udp_set_setup_callback(pa_raop_client *c, pa_raop_client_setup_cb_t callback, void *userdata) {
+void pa_raop_client_set_state_callback(pa_raop_client *c, pa_raop_client_state_cb_t callback, void *userdata) {
     pa_assert(c);
 
-    c->udp_setup_callback = callback;
-    c->udp_setup_userdata = userdata;
-}
-
-void pa_raop_client_udp_set_record_callback(pa_raop_client *c, pa_raop_client_record_cb_t callback, void *userdata) {
-    pa_assert(c);
-
-    c->udp_record_callback = callback;
-    c->udp_record_userdata = userdata;
-}
-
-void pa_raop_client_udp_set_disconnected_callback(pa_raop_client *c, pa_raop_client_disconnected_cb_t callback, void *userdata) {
-    pa_assert(c);
-
-    c->udp_disconnected_callback = callback;
-    c->udp_disconnected_userdata = userdata;
+    c->state_callback = callback;
+    c->state_userdata = userdata;
 }
