@@ -952,7 +952,7 @@ int pa__init(pa_module *m) {
     pa_sink_set_asyncmsgq(u->sink, u->thread_mq.inq);
     pa_sink_set_rtpoll(u->sink, u->rtpoll);
 
-    if (!(u->raop = pa_raop_client_new(u->core, server, u->protocol, ss))) {
+    if (!(u->raop = pa_raop_client_new(u->core, server, u->protocol))) {
         pa_log("Failed to connect to server.");
         goto fail;
     }

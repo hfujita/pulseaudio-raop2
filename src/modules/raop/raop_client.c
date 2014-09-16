@@ -43,6 +43,7 @@
 
 #include <pulse/xmalloc.h>
 #include <pulse/timeval.h>
+#include <pulse/sample.h>
 
 #include <pulsecore/core-error.h>
 #include <pulsecore/core-rtclock.h>
@@ -1040,11 +1041,10 @@ static void udp_rtsp_cb(pa_rtsp_client *rtsp, pa_rtsp_state state, pa_headerlist
     }
 }
 
-pa_raop_client* pa_raop_client_new(pa_core *core, const char *host,
-                                   pa_raop_protocol_t protocol,
-                                   pa_sample_spec spec) {
-    pa_parsed_address a;
+pa_raop_client* pa_raop_client_new(pa_core *core, const char *host, pa_raop_protocol_t protocol) {
     pa_raop_client* c;
+    pa_parsed_address a;
+    pa_sample_spec ss;
 
     pa_assert(core);
     pa_assert(host);
@@ -1077,10 +1077,11 @@ pa_raop_client* pa_raop_client_new(pa_core *core, const char *host,
         c->port = DEFAULT_RAOP_PORT;
 
     c->is_recording = false;
-
     c->udp_first_packet = true;
+
+    ss = core->default_sample_spec;
     /* Packet sync interval should be around 1s. */
-    c->udp_sync_interval = spec.rate / UDP_FRAMES_PER_PACKET;
+    c->udp_sync_interval = ss.rate / UDP_FRAMES_PER_PACKET;
     c->udp_sync_count = 0;
 
     if (c->protocol == RAOP_TCP) {

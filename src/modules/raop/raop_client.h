@@ -21,7 +21,7 @@
   Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA 02111-1307
   USA.
 ***/
-#include <pulse/sample.h>
+
 #include <pulse/volume.h>
 
 #include <pulsecore/core.h>
@@ -36,7 +36,7 @@ typedef enum pa_raop_protocol {
 
 typedef struct pa_raop_client pa_raop_client;
 
-pa_raop_client* pa_raop_client_new(pa_core *core, const char *host, pa_raop_protocol_t protocol, pa_sample_spec spec);
+pa_raop_client* pa_raop_client_new(pa_core *core, const char *host, pa_raop_protocol_t protocol);
 void pa_raop_client_free(pa_raop_client *c);
 
 int pa_raop_client_connect(pa_raop_client *c);
