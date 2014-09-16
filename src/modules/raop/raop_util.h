@@ -1,11 +1,10 @@
-#ifndef foobase64hfoo
-#define foobase64hfoo
+#ifndef fooraoputilfoo
+#define fooraoputilfoo
 
 /***
   This file is part of PulseAudio.
 
-  Copyright 2008 Colin Guthrie
-  Copyright Kungliga Tekniska Høgskolan
+  Copyright 2013 Martin Blanchard
 
   PulseAudio is free software; you can redistribute it and/or modify
   it under the terms of the GNU Lesser General Public License as published
@@ -21,12 +20,9 @@
   along with PulseAudio; if not, see <http://www.gnu.org/licenses/>.
 ***/
 
-/***
-  This file was originally inspired by a file developed by
-  Kungliga Tekniska Høgskolan.
-***/
+int pa_raop_base64_encode(const void *data, int len, char **str);
+int pa_raop_base64_decode(const char *str, void *data);
 
-int pa_base64_encode(const void *data, int size, char **str);
-int pa_base64_decode(const char *str, void *data);
+int pa_raop_md5_hash(const char *data, int len, char **str);
 
 #endif
