@@ -55,10 +55,11 @@
 #include <pulsecore/poll.h>
 
 #include "module-raop-sink-symdef.h"
+
 #include "rtp.h"
 #include "sdp.h"
 #include "sap.h"
-#include "raop_client.h"
+#include "raop-client.h"
 
 PA_MODULE_AUTHOR("Colin Guthrie");
 PA_MODULE_DESCRIPTION("RAOP Sink");
