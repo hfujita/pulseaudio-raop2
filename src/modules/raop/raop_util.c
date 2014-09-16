@@ -1,7 +1,8 @@
 /***
   This file is part of PulseAudio.
 
-  Copyright 2008 Colin Guthrie
+  Copyright 2013 Martin Blanchard
+  Copyright Kungliga Tekniska Høgskolan & Colin Guthrie
 
   PulseAudio is free software; you can redistribute it and/or modify
   it under the terms of the GNU Lesser General Public License as published
@@ -20,8 +21,8 @@
 ***/
 
 /***
-  This file was originally inspired by a file developed by
-  Kungliga Tekniska Høgskolan.
+  The base64 implementation was originally inspired by a file developed
+  by Kungliga Tekniska Høgskolan.
 ***/
 
 #ifdef HAVE_CONFIG_H
@@ -31,14 +32,27 @@
 #include <stdlib.h>
 #include <string.h>
 
+#include <openssl/err.h>
+#include <openssl/md5.h>
+
 #include <pulse/xmalloc.h>
 
-#include "base64.h"
+#include <pulsecore/macro.h>
+
+#include "raop_util.h"
+
+#ifndef MD5_DIGEST_LENGTH
+#define MD5_DIGEST_LENGTH 16
+#endif
+
+#define MD5_HASH_LENGTH (2*MD5_DIGEST_LENGTH)
+
+#define BASE64_DECODE_ERROR 0xffffffff
 
 static const char base64_chars[] =
     "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
 
-static int pos(char c) {
+static int char_position(char c) {
     if (c >= 'A' && c <= 'Z')
         return c - 'A' + 0;
     if (c >= 'a' && c <= 'z')
@@ -53,79 +67,81 @@ static int pos(char c) {
     return -1;
 }
 
-int pa_base64_encode(const void *data, int size, char **str) {
-    char *s, *p;
+static unsigned int token_decode(const char *token) {
+    unsigned int val = 0;
+    int marker = 0;
     int i;
-    int c;
-    const unsigned char *q;
 
-    p = s = pa_xnew(char, size * 4 / 3 + 4);
+    if (strlen(token) < 4)
+        return BASE64_DECODE_ERROR;
+    for (i = 0; i < 4; i++) {
+        val *= 64;
+        if (token[i] == '=')
+            marker++;
+        else if (marker > 0)
+            return BASE64_DECODE_ERROR;
+        else {
+            int lpos = char_position(token[i]);
+            if (lpos < 0)
+                return BASE64_DECODE_ERROR;
+            val += lpos;
+        }
+    }
+
+    if (marker > 2)
+        return BASE64_DECODE_ERROR;
+
+    return (marker << 24) | val;
+}
+
+int pa_raop_base64_encode(const void *data, int len, char **str) {
+    const unsigned char *q;
+    char *p, *s = NULL;
+    int i, c;
+
+    pa_assert(data);
+    pa_assert(str);
+
+    p = s = pa_xnew(char, len * 4 / 3 + 4);
     q = (const unsigned char *) data;
-    for (i = 0; i < size;) {
+    for (i = 0; i < len;) {
         c = q[i++];
         c *= 256;
-        if (i < size)
+        if (i < len)
             c += q[i];
         i++;
         c *= 256;
-        if (i < size)
+        if (i < len)
             c += q[i];
         i++;
         p[0] = base64_chars[(c & 0x00fc0000) >> 18];
         p[1] = base64_chars[(c & 0x0003f000) >> 12];
         p[2] = base64_chars[(c & 0x00000fc0) >> 6];
         p[3] = base64_chars[(c & 0x0000003f) >> 0];
-        if (i > size)
+        if (i > len)
             p[3] = '=';
-        if (i > size + 1)
+        if (i > len + 1)
             p[2] = '=';
         p += 4;
     }
 
     *p = 0;
     *str = s;
-
     return strlen(s);
 }
 
-#define DECODE_ERROR 0xffffffff
-
-static unsigned int token_decode(const char *token) {
-    int i;
-    unsigned int val = 0;
-    int marker = 0;
-
-    if (strlen(token) < 4)
-        return DECODE_ERROR;
-    for (i = 0; i < 4; i++) {
-        val *= 64;
-        if (token[i] == '=')
-            marker++;
-        else if (marker > 0)
-            return DECODE_ERROR;
-        else {
-            int lpos = pos(token[i]);
-            if (lpos < 0)
-                return DECODE_ERROR;
-            val += lpos;
-        }
-    }
-
-    if (marker > 2)
-        return DECODE_ERROR;
-
-    return (marker << 24) | val;
-}
-
-int pa_base64_decode(const char *str, void *data) {
+int pa_raop_base64_decode(const char *str, void *data) {
     const char *p;
     unsigned char *q;
+
+    pa_assert(str);
+    pa_assert(data);
 
     q = data;
     for (p = str; *p && (*p == '=' || strchr(base64_chars, *p)); p += 4) {
         unsigned int val = token_decode(p);
         unsigned int marker = (val >> 24) & 0xff;
-        if (val == DECODE_ERROR)
+        if (val == BASE64_DECODE_ERROR)
             return -1;
         *q++ = (val >> 16) & 0xff;
         if (marker < 2)
@@ -135,4 +151,22 @@ int pa_base64_decode(const char *str, void *data) {
     }
 
     return q - (unsigned char *) data;
+}
+
+int pa_raop_md5_hash(const char *data, int len, char **str) {
+    unsigned char d[MD5_DIGEST_LENGTH];
+    char *s = NULL;
+    int i;
+
+    pa_assert(data);
+    pa_assert(str);
+
+    MD5((unsigned char*) data, len, d);
+    s = pa_xnew(char, MD5_HASH_LENGTH);
+    for (i = 0; i < MD5_DIGEST_LENGTH; i++)
+        sprintf(&s[2*i], "%02x", (unsigned int) d[i]);
+
+    *str = s;
+    s[MD5_HASH_LENGTH] = 0;
+    return strlen(s);
 }
