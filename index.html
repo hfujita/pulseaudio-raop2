@@ -2,9 +2,9 @@
 <html>
 
   <head>
-    <meta charset='utf-8' />
-    <meta http-equiv="X-UA-Compatible" content="chrome=1" />
-    <meta name="description" content="Pulseaudio-raop2 : Experimental RAOP2 (Apple AirPlay2) support for PulseAudio" />
+    <meta charset='utf-8'>
+    <meta http-equiv="X-UA-Compatible" content="chrome=1">
+    <meta name="description" content="Pulseaudio-raop2 : Experimental RAOP2 (Apple AirPlay2) support for PulseAudio">
 
     <link rel="stylesheet" type="text/css" media="screen" href="stylesheets/stylesheet.css">
 
@@ -53,10 +53,20 @@
 </ul>
 </li>
 <li>Upgraded the codebase to PulseAudio 4.0 (previously around 2.99).</li>
-</ul><p>See the commit history for details.</p>
+</ul>
+
+<p>Then recently Colin Leroy <a href="https://github.com/colinleroy/pulseaudio">rebased my &amp; Martin's latest patches on PulseAudio 5.0</a>.</p>
+
+<p>See the commit history for details.</p>
 
 <h1>
 <a name="news" class="anchor" href="#news"><span class="octicon octicon-link"></span></a>News</h1>
+
+<h2>
+<a name="main-branch-is-now-clraop2-v2-10122014" class="anchor" href="#main-branch-is-now-clraop2-v2-10122014"><span class="octicon octicon-link"></span></a>Main branch is now cl/raop2-v2 (10/12/2014)</h2>
+
+<p>I've pushed <code>cl/raop2-v2</code> branch and made it default. This is identical to Colin's <code>raop2-v2</code> branch.
+Also, I've added a tip to enable local audio devices on the latest branch. See the "Configuration file for local devices" section below.</p>
 
 <h2>
 <a name="main-branch-is-now-raop2-for-merge2-1282014" class="anchor" href="#main-branch-is-now-raop2-for-merge2-1282014"><span class="octicon octicon-link"></span></a>Main branch is now raop2-for-merge2 (1/28/2014)</h2>
@@ -81,12 +91,15 @@ $ git checkout -b raop2-for-merge origin/raop2-for-merge
 </code></pre>
 
 <h1>
-<a name="current-status-as-of-10142013" class="anchor" href="#current-status-as-of-10142013"><span class="octicon octicon-link"></span></a>Current status (as of 10/14/2013)</h1>
+<a name="current-status-as-of-10122014" class="anchor" href="#current-status-as-of-10122014"><span class="octicon octicon-link"></span></a>Current status (as of 10/12/2014)</h1>
 
 <ul>
 <li>Plays back music on Pioneer VSX-43 (AV receiver), Apple TV 3rd gen. and some other devices (see below for tested device list).</li>
 <li>Supposed to support both TCP an UDP protocols. However, TCP procotol is not tested at all because I don't own a device.</li>
-</ul><h2>
+<li>We are trying to get it merged into the mainstream but not done yet.</li>
+</ul>
+
+<h2>
 <a name="known-issues" class="anchor" href="#known-issues"><span class="octicon octicon-link"></span></a>Known issues</h2>
 
 <p>As of 10/14/2013</p>
@@ -95,8 +108,11 @@ $ git checkout -b raop2-for-merge origin/raop2-for-merge
 <li>Sound test (launched from the GNOME sound setting dialog) does not work (no sound heard).</li>
 <li>Works reasonably with VLC/Totem/Rhythmbox but when playing music from Flash player, quite rough sound is heard.</li>
 <li>There's a huge latency. Okay for music player but absolutely terrible for movies/voice chat.</li>
-<li><a href="https://bugs.freedesktop.org/show_bug.cgi?id=42804#c43">Volume calculation is wrong</a></li>
-</ul><h1>
+<li><p><a href="https://bugs.freedesktop.org/show_bug.cgi?id=42804#c43">Volume calculation is wrong</a></p></li>
+<li><p>For more details, see the <a href="https://github.com/hfujita/pulseaudio-raop2/issues">github issues page</a>.</p></li>
+</ul>
+
+<h1>
 <a name="warnings" class="anchor" href="#warnings"><span class="octicon octicon-link"></span></a>Warnings</h1>
 
 <ul>
@@ -105,19 +121,23 @@ $ git checkout -b raop2-for-merge origin/raop2-for-merge
 <li>This is totally my personal hobby. It is not supported by any company or organization. My contribution totally depends on my free time and motivation. Especially, my primary goal is to make it work on my Pioneer VSX-43, so I may not be interested in other devices.</li>
 <li>You don't have to be a C/systems programming expert to try it, but you probably have to be an expert of building software/configuring your system.</li>
 <li>As written in the license, there is <strong>absolutely no warranty</strong>. You should try this at your own risk.</li>
-</ul><h1>
+</ul>
+
+<h1>
 <a name="how-to-try" class="anchor" href="#how-to-try"><span class="octicon octicon-link"></span></a>How to try</h1>
 
-<p>Since I'm using Ubuntu 13.04, I'll give you an instruction in Ubuntu. Should be similar in Debian or other Debian/Ubuntu-based distros. For other systems, please send me a patch for this page if you figure out how.</p>
+<p>Since I'm using Ubuntu 14.04, I'll give you an instruction in Ubuntu. Should be similar in Debian or other Debian/Ubuntu-based distros. For other systems, please send me a patch for this page if you figure out how.</p>
 
 <h2>
 <a name="0-prerequisites" class="anchor" href="#0-prerequisites"><span class="octicon octicon-link"></span></a>0. Prerequisites</h2>
 
 <p>Install some packages:</p>
 
-<pre><code>sudo apt-get install build-essential paprefs git pulseaudio-module-raop
+<pre><code>sudo apt-get install build-essential paprefs git pulseaudio-module-raop intltool
 sudo apt-get build-dep pulseaudio
 </code></pre>
+
+<p>(Thanks Stephan Henningsen for <a href="https://github.com/hfujita/pulseaudio-raop2/issues/16">pointing out intltool</a>!)</p>
 
 <h2>
 <a name="1-retrieving-the-code" class="anchor" href="#1-retrieving-the-code"><span class="octicon octicon-link"></span></a>1. Retrieving the code</h2>
@@ -129,8 +149,6 @@ sudo apt-get build-dep pulseaudio
 
 <pre><code>$ git clone git@github.com:hfujita/pulseaudio-raop2.git # if you have github account and registered your key
 </code></pre>
-
-<p>You should be in the <code>raop2-for-merge2</code> branch.</p>
 
 <p><strong>Note:</strong> tarball or zip <strong>won't work</strong> because PulseAudio build system relies on git revision information.</p>
 
@@ -185,6 +203,19 @@ $ make
 
 <p>Ubuntu desktop users will see that the sound icon on the status bar changes.</p>
 
+<h3>
+<a name="configuration-file-for-local-devices-for-pa-50" class="anchor" href="#configuration-file-for-local-devices-for-pa-50"><span class="octicon octicon-link"></span></a>Configuration file for local devices (for PA 5.0)</h3>
+
+<p>If you are currently using PA 4.0 or older version (this is most likely as PA 5.0 has not come out yet), you need to copy a configuration file in order to use local devices (internal speakers, headphones, HDMI, etc) other than AirPlay devices.</p>
+
+<pre><code>$ cp /usr/share/pulseaudio/alsa-mixer/profile-sets/extra-hdmi.conf \
+   $PA_SRC_DIR/src/modules/alsa/mixer/profile-sets/
+</code></pre>
+
+<p>Replace <code>$PA_SRC_DIR</code> with your pulseaudio working directory -- a directory to which you cloned the tree.</p>
+
+<p>(Thanks Colin Leroy for this tip!)</p>
+
 <h2>
 <a name="4-launching-the-new-pulseaudio" class="anchor" href="#4-launching-the-new-pulseaudio"><span class="octicon octicon-link"></span></a>4. Launching the new PulseAudio</h2>
 
@@ -230,12 +261,16 @@ $ git pull
 <li>Totem</li>
 <li>Rhythmbox</li>
 <li>Amarok (thanks to Ewan Cochevelou)</li>
-</ul><h2>
+</ul>
+
+<h2>
 <a name="rough-sound" class="anchor" href="#rough-sound"><span class="octicon octicon-link"></span></a>Rough sound</h2>
 
 <ul>
 <li>Adobe Flash player</li>
-</ul><h1>
+</ul>
+
+<h1>
 <a name="tested-device" class="anchor" href="#tested-device"><span class="octicon octicon-link"></span></a>Tested device</h1>
 
 <p>Please send me a report if you have any experience with your device. Both positive/negative results are welcome.</p>
@@ -260,11 +295,13 @@ $ git pull
 <li>Philips AD7050W/10 (thanks to Ralf Ertzinger)</li>
 <li>Sony STR-DN840 (thanks to Cyrus Boadway)</li>
 <li>PURE Contour 200i Air (thanks to Johannes Schinko)</li>
-</ul><h1>
+</ul>
+
+<h1>
 <a name="contact-information" class="anchor" href="#contact-information"><span class="octicon octicon-link"></span></a>Contact information</h1>
 
 <p>Please e-mail me at Hajime Fujita <a href="mailto:crisp.fujita@nifty.com">crisp.fujita@nifty.com</a>, or you can <a href="https://github.com/hfujita/pulseaudio-raop2/issues">post a new issue at github</a> (probably a github account is required).
-Also, this topic (raop2 support) is actively discussed at <a href="https://bugs.freedesktop.org/show_bug.cgi?id=42804">PulseAudio Bug 42804</a>.</p>
+Also, this topic (raop2 support) is discussed at <a href="https://bugs.freedesktop.org/show_bug.cgi?id=42804">PulseAudio Bug 42804</a>.</p>
 
 <h1>
 <a name="related-information" class="anchor" href="#related-information"><span class="octicon octicon-link"></span></a>Related information</h1>
@@ -278,7 +315,9 @@ Also, this topic (raop2 support) is actively discussed at <a href="https://bugs.
 <li>
 <a href="https://npmjs.org/package/airtunes">node-airtunes</a> node.js implementation of raop2</li>
 <li><a href="https://github.com/jasonmc/forked-daapd">forked-daapd</a></li>
-</ul><h2>
+</ul>
+
+<h2>
 <a name="protocol-information" class="anchor" href="#protocol-information"><span class="octicon octicon-link"></span></a>Protocol information</h2>
 
 <ul>
