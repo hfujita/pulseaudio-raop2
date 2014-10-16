@@ -209,9 +209,9 @@ static int sink_process_msg(pa_msgobject *o, int code, void *data, int64_t offse
                 }
 
                 case PA_RAOP_CONNECTED: {
-                   pa_assert(!u->rtpoll_item);
+                    pa_assert(!u->rtpoll_item);
 
-                   u->oob = pa_raop_client_register_pollfd(u->raop, u->rtpoll, &u->rtpoll_item);
+                    u->oob = pa_raop_client_register_pollfd(u->raop, u->rtpoll, &u->rtpoll_item);
 
                     return 0;
                 }
