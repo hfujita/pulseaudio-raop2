@@ -43,4 +43,6 @@ int pa_parse_address(const char *a, pa_parsed_address *ret_p);
 
 bool pa_is_ip_address(const char *a);
 
+bool pa_is_ip6_address(const char *a);
+
 #endif
