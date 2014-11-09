@@ -851,14 +851,18 @@ static void rtsp_stream_cb(pa_rtsp_client *rtsp, pa_rtsp_state_t state, pa_rtsp_
             int frames = 0;
             const char *ip;
             char *url;
+            int ipv;
 
             pa_log_debug("RAOP: CONNECTED");
 
             ip = pa_rtsp_localip(c->rtsp);
-            if (pa_is_ip6_address(ip))
+            if (pa_is_ip6_address(ip)) {
+                ipv = 6;
                 url = pa_sprintf_malloc("rtsp://[%s]/%s", ip, c->sid);
-            else
+            } else {
+                ipv = 4;
                 url = pa_sprintf_malloc("rtsp://%s/%s", ip, c->sid);
+            }
             pa_rtsp_set_url(c->rtsp, url);
 
             if (c->protocol == PA_RAOP_PROTOCOL_TCP)
@@ -870,14 +874,14 @@ static void rtsp_stream_cb(pa_rtsp_client *rtsp, pa_rtsp_state_t state, pa_rtsp_
                 case PA_RAOP_ENCRYPTION_NONE: {
                     sdp = pa_sprintf_malloc(
                         "v=0\r\n"
-                        "o=iTunes %s 0 IN IP4 %s\r\n"
+                        "o=iTunes %s 0 IN IP%d %s\r\n"
                         "s=iTunes\r\n"
-                        "c=IN IP4 %s\r\n"
+                        "c=IN IP%d %s\r\n"
                         "t=0 0\r\n"
                         "m=audio 0 RTP/AVP 96\r\n"
                         "a=rtpmap:96 AppleLossless\r\n"
                         "a=fmtp:96 %d 0 16 40 10 14 2 255 0 0 44100\r\n",
-                        c->sid, ip, c->host, frames);
+                        c->sid, ipv, ip, ipv, c->host, frames);
 
                     break;
                 }
@@ -891,16 +895,16 @@ static void rtsp_stream_cb(pa_rtsp_client *rtsp, pa_rtsp_state_t state, pa_rtsp_
 
                     sdp = pa_sprintf_malloc(
                         "v=0\r\n"
-                        "o=iTunes %s 0 IN IP4 %s\r\n"
+                        "o=iTunes %s 0 IN IP%d %s\r\n"
                         "s=iTunes\r\n"
-                        "c=IN IP4 %s\r\n"
+                        "c=IN IP%d %s\r\n"
                         "t=0 0\r\n"
                         "m=audio 0 RTP/AVP 96\r\n"
                         "a=rtpmap:96 AppleLossless\r\n"
                         "a=fmtp:96 %d 0 16 40 10 14 2 255 0 0 44100\r\n"
                         "a=rsaaeskey:%s\r\n"
                         "a=aesiv:%s\r\n",
-                        c->sid, ip, c->host, frames, key, iv);
+                        c->sid, ipv, ip, ipv, c->host, frames, key, iv);
 
                     pa_xfree(key);
                     pa_xfree(iv);
