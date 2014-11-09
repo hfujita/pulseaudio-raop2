@@ -855,7 +855,10 @@ static void rtsp_stream_cb(pa_rtsp_client *rtsp, pa_rtsp_state_t state, pa_rtsp_
             pa_log_debug("RAOP: CONNECTED");
 
             ip = pa_rtsp_localip(c->rtsp);
-            url = pa_sprintf_malloc("rtsp://%s/%s", ip, c->sid);
+            if (pa_is_ip6_address(ip))
+                url = pa_sprintf_malloc("rtsp://[%s]/%s", ip, c->sid);
+            else
+                url = pa_sprintf_malloc("rtsp://%s/%s", ip, c->sid);
             pa_rtsp_set_url(c->rtsp, url);
 
             if (c->protocol == PA_RAOP_PROTOCOL_TCP)
