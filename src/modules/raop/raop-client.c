@@ -768,11 +768,6 @@ static int open_bind_udp_socket(pa_raop_client *c, uint16_t *actual_port) {
         goto fail;
     }
 
-    pa_zero(sa4);
-#ifdef HAVE_IPV6
-    pa_zero(sa6);
-#endif
-
     if ((fd = pa_socket_cloexec(af, SOCK_DGRAM, 0)) < 0) {
         pa_log("socket() failed: %s", pa_cstrerror(errno));
         goto fail;
