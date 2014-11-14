@@ -68,6 +68,8 @@
 #define FRAMES_PER_TCP_PACKET 4096
 #define FRAMES_PER_UDP_PACKET 352
 
+#define RTX_BUFFERING_SECONDS 4
+
 #define DEFAULT_TCP_AUDIO_PORT   6000
 #define DEFAULT_UDP_AUDIO_PORT   6000
 #define DEFAULT_UDP_CONTROL_PORT 6001
@@ -1396,7 +1398,7 @@ pa_raop_client* pa_raop_client_new(pa_core *core, const char *host, pa_raop_prot
 
     ss = core->default_sample_spec;
     if (c->protocol == PA_RAOP_PROTOCOL_UDP)
-        size = 2 * ss.rate / FRAMES_PER_UDP_PACKET;
+        size = RTX_BUFFERING_SECONDS * ss.rate / FRAMES_PER_UDP_PACKET;
 
     c->is_recording = false;
     c->is_first_packet = true;
