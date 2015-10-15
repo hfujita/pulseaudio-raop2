@@ -928,7 +928,7 @@ static void rtsp_stream_cb(pa_rtsp_client *rtsp, pa_rtsp_state_t state, pa_rtsp_
         }
 
         case STATE_OPTIONS: {
-            pa_log_debug("RAOP: OPTIONS");
+            pa_log_debug("RAOP: OPTIONS (stream cb)");
 
             break;
         }
@@ -1225,7 +1225,7 @@ static void rtsp_auth_cb(pa_rtsp_client *rtsp, pa_rtsp_state_t state, pa_rtsp_st
             char *realm = NULL, *nonce = NULL, *response = NULL;
             char comma[] = ",";
 
-            pa_log_debug("RAOP: OPTIONS");
+            pa_log_debug("RAOP: OPTIONS (auth cb)");
             /* We do not consider the Apple-Response */
             pa_rtsp_remove_header(c->rtsp, "Apple-Challenge");
 
