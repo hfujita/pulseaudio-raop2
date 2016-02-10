@@ -721,7 +721,7 @@ static void udp_thread_func(struct userdata *u) {
         }
 
         /* Polling (audio data + control socket + timing socket). */
-        if ((rv = pa_rtpoll_run(u->rtpoll, true)) < 0)
+        if ((rv = pa_rtpoll_run(u->rtpoll)) < 0)
             goto fail;
         else if (rv == 0)
             goto finish;
