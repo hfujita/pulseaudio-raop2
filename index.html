@@ -14,8 +14,6 @@
       <h1 class="project-name">Pulseaudio-raop2</h1>
       <h2 class="project-tagline">Experimental RAOP2 (Apple AirPlay2) support for PulseAudio</h2>
       <a href="https://github.com/hfujita/pulseaudio-raop2" class="btn">View on GitHub</a>
-      <a href="https://github.com/hfujita/pulseaudio-raop2/zipball/master" class="btn">Download .zip</a>
-      <a href="https://github.com/hfujita/pulseaudio-raop2/tarball/master" class="btn">Download .tar.gz</a>
     </section>
 
     <section class="main-content">
@@ -90,8 +88,13 @@
 
 <p>Install some packages:</p>
 
-<pre><code>sudo apt-get install build-essential paprefs git pulseaudio-module-raop intltool libavahi-client-dev
+<pre>
+<code>## For Ubuntu / Debian
+sudo apt-get install build-essential paprefs git pulseaudio-module-raop intltool libavahi-client-dev
 sudo apt-get build-dep pulseaudio
+
+## For OpenSUSE (and maybe Fedora)
+sudo zypper install libcap-devel libsndfile-devel libudev-devel speex-devel speexdsp-devel pulseaudio-devel paprefs intltool
 </code></pre>
 
 <p>(Thanks Stephan Henningsen for <a href="https://github.com/hfujita/pulseaudio-raop2/issues/16">pointing out intltool</a> and Denilson Figueiredo de Sá for <a href="https://github.com/hfujita/pulseaudio-raop2/issues/54">pointing out libavahi-client-dev</a>!)</p>
