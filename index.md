@@ -1,3 +1,11 @@
+# News!
+
+pulseaudio-raop2 has been merged to upstream and released with [PulseAudio 11.0](https://www.freedesktop.org/wiki/Software/PulseAudio/Notes/11.0/). Big thanks to people who worked hard to make this happen. Please use the upstream version later or equal to 11.0 for this feature.
+
+For this reason, it is recommended that any questions or bug report related to raop are sent to [pulseaudio-discuss mailing list](https://lists.freedesktop.org/mailman/listinfo/pulseaudio-discuss).
+
+Following contents are preserved for reference purposes only. They may contain obsolete information.
+
 # What is this?
 
 This is an ongoing effort to make it possible to stream musics from [PulseAudio](http://www.freedesktop.org/wiki/Software/PulseAudio/) to recent AirPlay-capable devices (e.g. Apple TV, AV receivers).
