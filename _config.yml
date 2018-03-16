@@ -1,0 +1,8 @@
+title: Pulseaudio-raop2
+description: Experimental RAOP2 (Apple AirPlay2) support for PulseAudio
+google_analytics: 
+show_downloads: true
+theme: jekyll-theme-cayman
+
+gems:
+  - jekyll-mentions
